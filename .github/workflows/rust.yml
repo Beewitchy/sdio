@@ -24,9 +24,9 @@ jobs:
             ~/.cargo/git
             target
           key: ${{ runner.os }}-cargo
-      - name: Install Rust targets
-        run: rustup target add thumbv8m.main-none-eabihf thumbv7em-none-eabi thumbv6m-none-eabi
       - name: Run check
         run: cargo check
       - name: Run tests
         run: cargo test
+      - name: Check fmt
+        run: cargo fmt --check
