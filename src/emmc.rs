@@ -533,21 +533,21 @@ impl Addressable for Emmc {
 }
 
 /// Card Storage Device
-impl<B: MmcBus, const BLOCK_SIZE: usize> BlockDevice<Emmc, B, BLOCK_SIZE> {
+impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Emmc, B, D, BLOCK_SIZE> {
     /// Create a new SD card
-    pub async fn new_emmc(bus: B, freq: u32, delay: &mut impl DelayNs) -> Result<Self, MmcError> {
+    pub async fn new_emmc(bus: B, freq: u32, delay: D) -> Result<Self, MmcError> {
         let mut s = Self {
             info: Emmc::default(),
-            bus: BusAdapter { bus, rca: 0 },
+            bus: BusAdapter { bus, delay, rca: 0 },
         };
 
-        s.acquire(freq, delay).await?;
+        s.acquire(freq).await?;
 
         Ok(s)
     }
 
     /// Initializes the card into a known state (or at least tries to).
-    async fn acquire(&mut self, freq: u32, _delay: &mut impl DelayNs) -> Result<(), MmcError> {
+    async fn acquire(&mut self, freq: u32) -> Result<(), MmcError> {
         // Clamp the frequency to the supported bus frequency.
         let freq = freq.clamp(0, self.bus.bus.supports_frequency());
 

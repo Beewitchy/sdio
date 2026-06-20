@@ -826,25 +826,21 @@ impl Addressable for Card {
 }
 
 /// Card Storage Device
-impl<B: MmcBus, const BLOCK_SIZE: usize> BlockDevice<Card, B, BLOCK_SIZE> {
+impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLOCK_SIZE> {
     /// Create a new SD card
-    pub async fn new_sd_card(
-        bus: B,
-        freq: u32,
-        delay: &mut impl DelayNs,
-    ) -> Result<Self, MmcError> {
+    pub async fn new_sd_card(bus: B, freq: u32, delay: D) -> Result<Self, MmcError> {
         let mut s = Self {
             info: Card::default(),
-            bus: BusAdapter { bus, rca: 0 },
+            bus: BusAdapter { bus, delay, rca: 0 },
         };
 
-        s.acquire(freq, delay).await?;
+        s.acquire(freq).await?;
 
         Ok(s)
     }
 
     /// Initializes the card into a known state (or at least tries to).
-    async fn acquire(&mut self, freq: u32, delay: &mut impl DelayNs) -> Result<(), MmcError> {
+    async fn acquire(&mut self, freq: u32) -> Result<(), MmcError> {
         // Clamp the frequency to the supported bus frequency.
         let freq = freq.clamp(0, self.bus.bus.supports_frequency());
 
@@ -994,7 +990,7 @@ impl<B: MmcBus, const BLOCK_SIZE: usize> BlockDevice<Card, B, BLOCK_SIZE> {
                 Signalling::SDR25
             };
 
-            if request == self.switch_signalling_mode(request, delay).await? {
+            if request == self.switch_signalling_mode(request).await? {
                 // Up to max_f
                 self.bus.bus.set_bus(bus_width, freq).await?;
 
@@ -1028,7 +1024,6 @@ impl<B: MmcBus, const BLOCK_SIZE: usize> BlockDevice<Card, B, BLOCK_SIZE> {
     async fn switch_signalling_mode(
         &mut self,
         signalling: Signalling,
-        delay: &mut impl DelayNs,
     ) -> Result<Signalling, MmcError> {
         // NB PLSS v7_10 4.3.10.4: "the use of SET_BLK_LEN command is not
         // necessary"
@@ -1053,7 +1048,7 @@ impl<B: MmcBus, const BLOCK_SIZE: usize> BlockDevice<Card, B, BLOCK_SIZE> {
         // clocks after the end of the switch command
         // transaction. We know the current clock period is < 80ns,
         // so a total delay of 640ns is required here
-        delay.delay_ns(640).await;
+        self.bus.delay.delay_ns(640).await;
 
         // Function Selection of Function Group 1
         let selection =

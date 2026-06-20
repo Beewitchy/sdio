@@ -394,26 +394,26 @@ impl From<R5> for SdioResponse {
 }
 
 /// SDIO Interface
-pub struct SdioCard<B: MmcBus> {
-    bus: BusAdapter<B>,
+pub struct SdioCard<B: MmcBus, D: DelayNs> {
+    bus: BusAdapter<B, D>,
     ocr: OCR<SDIO>,
 }
 
-impl<B: MmcBus> SdioCard<B> {
+impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
     /// Create a new SD card
-    pub async fn new_sdio(bus: B, freq: u32, delay: &mut impl DelayNs) -> Result<Self, MmcError> {
+    pub async fn new_sdio(bus: B, freq: u32, delay: D) -> Result<Self, MmcError> {
         let mut s = Self {
-            bus: BusAdapter { bus, rca: 0 },
+            bus: BusAdapter { bus, delay, rca: 0 },
             ocr: OCR::default(),
         };
 
-        s.acquire(freq, delay).await?;
+        s.acquire(freq).await?;
 
         Ok(s)
     }
 
     /// Initializes the card into a known state (or at least tries to).
-    async fn acquire(&mut self, freq: u32, _delay: &mut impl DelayNs) -> Result<(), MmcError> {
+    async fn acquire(&mut self, freq: u32) -> Result<(), MmcError> {
         // Clamp the frequency to the supported bus frequency.
         let freq = freq.clamp(0, self.bus.bus.supports_frequency());
 

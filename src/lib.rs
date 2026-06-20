@@ -17,6 +17,7 @@
 #![no_std]
 
 use aligned::{A4, Aligned};
+use embedded_hal_async::delay::DelayNs;
 
 use crate::sd::{
     CardCapacity, CardStatus, read_multiple_blocks, read_single_block, set_block_length,
@@ -505,12 +506,13 @@ impl Response for R5 {
 }
 
 /// Bus Adapter that implements common functionality of all bus users
-struct BusAdapter<B: MmcBus> {
+struct BusAdapter<B: MmcBus, D: DelayNs> {
     pub bus: B,
+    pub delay: D,
     pub rca: u16,
 }
 
-impl<B: MmcBus> BusAdapter<B> {
+impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     /// Select one card and place it into the _Tranfer State_
     ///
     /// If `None` is specifed for `card`, all cards are put back into
@@ -637,14 +639,16 @@ pub enum Signalling {
 }
 
 /// Represents a block storage device
-pub struct BlockDevice<T: Addressable, B: MmcBus, const BLOCK_SIZE: usize> {
+pub struct BlockDevice<T: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> {
     info: T,
-    bus: BusAdapter<B>,
+    bus: BusAdapter<B, D>,
 }
 
 /// Card or Emmc storage device
-impl<A: Addressable, B: MmcBus, const BLOCK_SIZE: usize> BlockDevice<A, B, BLOCK_SIZE> {
-    /// Write a block
+impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
+    BlockDevice<A, B, D, BLOCK_SIZE>
+{
+    /// Get the card info
     pub fn card(&self) -> A {
         self.info.clone()
     }
@@ -695,7 +699,7 @@ impl<A: Addressable, B: MmcBus, const BLOCK_SIZE: usize> BlockDevice<A, B, BLOCK
         Ok(())
     }
 
-    /// Read a data block.
+    /// Write a data block.
     #[inline]
     async fn write_block(
         &mut self,
@@ -718,7 +722,7 @@ impl<A: Addressable, B: MmcBus, const BLOCK_SIZE: usize> BlockDevice<A, B, BLOCK
         Ok(())
     }
 
-    /// Read multiple data blocks.
+    /// Write multiple data blocks.
     #[inline]
     async fn write_blocks(
         &mut self,
@@ -742,8 +746,8 @@ impl<A: Addressable, B: MmcBus, const BLOCK_SIZE: usize> BlockDevice<A, B, BLOCK
     }
 }
 
-impl<A: Addressable, B: MmcBus, const BLOCK_SIZE: usize>
-    block_device_driver::BlockDevice<BLOCK_SIZE> for BlockDevice<A, B, BLOCK_SIZE>
+impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
+    block_device_driver::BlockDevice<BLOCK_SIZE> for BlockDevice<A, B, D, BLOCK_SIZE>
 {
     type Align = A4;
     type Error = MmcError;
