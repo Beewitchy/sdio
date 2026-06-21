@@ -957,6 +957,7 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
                 .await?,
         )
         .address();
+        self.info.rca = self.bus.rca;
 
         self.info.csd = self
             .bus
