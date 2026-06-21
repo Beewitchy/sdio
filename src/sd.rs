@@ -882,34 +882,13 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
         // a UHS-capable card may enter a partly-switched state when
         // we never follow up with CMD11. v1/v2 builds always read
         // `false` here (`has_vswitch` is hard-coded false).
-        let request_18v = self.bus.bus.supports_1v8();
-
-        // Note: this is a rather simplistic timeout loop. It can be improved later.
-        let mut i = 0;
-        self.info.ocr = loop {
-            // 3.2-3.3V
-            let voltage_window = 1 << 5;
-            // Initialize card
-
-            let ocr: OCR<SD> = self
-                .bus
-                .send_command(
-                    sd_send_op_cond(true, false, request_18v, voltage_window),
-                    true,
-                )
-                .await?
-                .into();
-
-            if !ocr.is_busy() {
-                // Power up done
-                break ocr;
-            } else if i > 750 {
-                return Err(MmcError::Timeout);
-            }
-
-            self.bus.delay.delay_ms(1).await;
-            i += 1;
-        };
+        self.info.ocr = self
+            .bus
+            .get_ocr(
+                &sd_send_op_cond(true, false, self.bus.bus.supports_1v8(), 1 << 5),
+                true,
+            )
+            .await?;
 
         self.info.card_type = if self.info.ocr.high_capacity() {
             // Card is SDHC or SDXC or SDUC
@@ -941,7 +920,7 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
         // the card accepted the S18A request (ocr.v18_allowed()). On
         // failure, fall through to 3.3V HS — `voltage_switch()`
         // already restored peripheral + GPIO state.
-        if request_18v && self.info.ocr.v18_allowed() {
+        if self.bus.bus.supports_1v8() && self.info.ocr.v18_allowed() {
             self.bus.send_command(voltage_switch(), false).await?;
         }
 

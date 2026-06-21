@@ -567,36 +567,19 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Emmc, B, D, BLO
         // Go.
         self.bus.init_idle().await?;
 
-        // Note: this is a rather simplistic timeout loop. It can be improved later.
-        let mut i = 0;
-        let ocr = loop {
-            let high_voltage = 0b0 << 7;
-            let access_mode = 0b10 << 29;
-            let op_cond = high_voltage | access_mode | 0b1_1111_1111 << 15;
-            // Initialize card
-            let ocr: OCR<EMMC> = self
-                .bus
-                .send_command(send_op_cond(op_cond), false)
-                .await?
-                .into();
-            if !ocr.is_busy() {
-                // Power up done
-                break ocr;
-            } else if i > 750 {
-                return Err(MmcError::Timeout);
-            }
+        let high_voltage = 0b0 << 7;
+        let access_mode = 0b10 << 29;
+        let op_cond = high_voltage | access_mode | 0b1_1111_1111 << 15;
 
-            self.bus.delay.delay_ms(1).await;
-            i += 1;
-        };
+        self.info.ocr = self.bus.get_ocr(&send_op_cond(op_cond), false).await?;
 
-        self.info.capacity = if ocr.access_mode() == 0b10 {
+        self.info.capacity = if self.info.ocr.access_mode() == 0b10 {
             // Card is SDHC or SDXC or SDUC
             CardCapacity::HighCapacity
         } else {
             CardCapacity::StandardCapacity
         };
-        self.info.ocr = ocr;
+
         self.info.cid = self
             .bus
             .send_command(common::all_send_cid(), false)

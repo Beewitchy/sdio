@@ -13,8 +13,8 @@ use aligned::{A4, Aligned};
 use embedded_hal_async::delay::DelayNs;
 
 use crate::sd::{
-    BlockSize, CardCapacity, CardStatus, read_multiple_blocks, read_single_block, set_block_length,
-    write_multiple_blocks, write_single_block,
+    BlockSize, CardCapacity, CardStatus, OCR, read_multiple_blocks, read_single_block,
+    set_block_length, write_multiple_blocks, write_single_block,
 };
 
 pub mod common;
@@ -509,6 +509,33 @@ impl Response for R5 {
     }
 }
 
+/// Check whether the card is ready for data
+pub async fn check_card(bus: &mut impl MmcBus, rca: u16) -> bool {
+    if let Ok(status) = bus.send_command(common::card_status(rca, false)).await
+        && CardStatus::<()>::from(status).ready_for_data()
+    {
+        true
+    } else {
+        false
+    }
+}
+
+// Allow passing `ControlCommand` by reference
+impl<T: ControlCommand> Command for &T {
+    const INDEX: u8 = T::INDEX;
+
+    type Resp<'a>
+        = T::Resp<'a>
+    where
+        Self: 'a;
+
+    fn arg(&self) -> u32 {
+        T::arg(&self)
+    }
+}
+
+impl<T: ControlCommand> ControlCommand for &T {}
+
 /// Bus Adapter that implements common functionality of all bus users
 struct BusAdapter<B: MmcBus, D: DelayNs> {
     pub bus: B,
@@ -517,6 +544,34 @@ struct BusAdapter<B: MmcBus, D: DelayNs> {
 }
 
 impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
+    /// Send the app command notification if this is an app command
+    async fn app_cmd(&mut self, app_cmd: bool) -> Result<(), MmcError> {
+        if app_cmd {
+            self.bus.send_command(sd::app_cmd(self.rca)).await?;
+        }
+
+        Ok(())
+    }
+
+    /// Wait for the card to be ready if required
+    async fn wait_if_required<R: Response>(&mut self) -> Result<(), MmcError> {
+        if !R::BUSY {
+            return Ok(());
+        }
+
+        // Wait up to 750ms + cmd time for ready after R1b response
+        // Note: this is a rather simplistic timeout loop. It can be improved later.
+        for _ in 0..750 {
+            if check_card(&mut self.bus, self.rca).await {
+                return Ok(());
+            }
+
+            self.delay.delay_ms(1).await;
+        }
+
+        Err(MmcError::Timeout)
+    }
+
     pub async fn init_idle(&mut self) -> Result<(), MmcError> {
         // While the SD/SDIO card or eMMC is in identification mode,
         // the SDMMC_CK frequency must be no more than 400 kHz.
@@ -544,30 +599,23 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
         }
     }
 
-    async fn app_cmd(&mut self, app_cmd: bool) -> Result<(), MmcError> {
-        if app_cmd {
-            self.bus.send_command(sd::app_cmd(self.rca)).await?;
-        }
-
-        Ok(())
-    }
-
-    pub async fn wait_if_required<C: Command>(&mut self) -> Result<(), MmcError> {
-        if !C::Resp::BUSY {
-            return Ok(());
-        }
-
+    /// Get the ocr with the provided command
+    pub async fn get_ocr<'a, C: ControlCommand + 'a, Ext>(
+        &mut self,
+        cmd: &'a C,
+        app_cmd: bool,
+    ) -> Result<OCR<Ext>, MmcError>
+    where
+        OCR<Ext>: From<<C as Command>::Resp<'a>>,
+    {
         // Wait up to 750ms + cmd time for ready after R1b response
         // Note: this is a rather simplistic timeout loop. It can be improved later.
         for _ in 0..750 {
-            let status: CardStatus<()> = self
-                .bus
-                .send_command(common::card_status(self.rca, false))
-                .await?
-                .into();
+            let ocr: OCR<Ext> = self.send_command(cmd, app_cmd).await?.into();
 
-            if status.ready_for_data() {
-                return Ok(());
+            if !ocr.is_busy() {
+                // Power up done
+                return Ok(ocr);
             }
 
             self.delay.delay_ms(1).await;
@@ -580,20 +628,22 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     ///
     /// Provide `Some(rca)` to execute this as an app cmd.
     pub async fn send_command<'a, C: ControlCommand + 'a>(
-        &'a mut self,
+        &mut self,
         cmd: C,
         app_cmd: bool,
     ) -> Result<C::Resp<'a>, MmcError> {
         self.app_cmd(app_cmd).await?;
         let res = self.bus.send_command(cmd).await?;
-        self.wait_if_required::<C>().await?;
+        self.wait_if_required::<C::Resp<'a>>().await?;
 
         Ok(res)
     }
 
-    /// Read N blocks of fixed size (CMD17, CMD18, CMD53 block mode).
+    /// Read N blocks of fixed size (CMD17, CMD18).
     ///
     /// Provide `Some(rca)` to execute this as an app cmd.
+    ///
+    /// Do not call this method for CMD53. Instead, call the underlying bus method.
     pub async fn read_blocks<'a, C: BlockReadCommand + 'a>(
         &mut self,
         cmd: C,
@@ -606,14 +656,16 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
             .await?;
         self.app_cmd(app_cmd).await?;
         let res = self.bus.read_blocks(cmd).await?;
-        self.wait_if_required::<C>().await?;
+        self.wait_if_required::<C::Resp<'a>>().await?;
 
         Ok(res)
     }
 
-    /// Write N blocks of fixed size (CMD24, CMD25, CMD53 block mode).
+    /// Write N blocks of fixed size (CMD24, CMD25).
     ///
     /// Provide `Some(rca)` to execute this as an app cmd.
+    ///
+    /// Do not call this method for CMD53. Instead, call the underlying bus method.
     pub async fn write_blocks<'a, C: BlockWriteCommand + 'a>(
         &mut self,
         cmd: C,
@@ -626,7 +678,7 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
             .await?;
         self.app_cmd(app_cmd).await?;
         let res = self.bus.write_blocks(cmd).await?;
-        self.wait_if_required::<C>().await?;
+        self.wait_if_required::<C::Resp<'a>>().await?;
 
         Ok(res)
     }

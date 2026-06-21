@@ -423,27 +423,10 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         self.bus.init_idle().await?;
 
         // Get IO OCR
-        // Note: this is a rather simplistic timeout loop. It can be improved later.
-        let mut i = 0;
-        self.ocr = loop {
-            match self
-                .bus
-                .send_command(io_send_op_cond(false, 0x0), false)
-                .await
-            {
-                Ok(r) => break Ok(r),
-                Err(MmcError::Timeout) => {}
-                Err(e) => break Err(e),
-            }
-
-            if i > 750 {
-                return Err(MmcError::Timeout);
-            }
-
-            self.bus.delay.delay_ms(1).await;
-            i += 1;
-        }?
-        .into();
+        self.ocr = self
+            .bus
+            .get_ocr(&io_send_op_cond(false, 0x0), false)
+            .await?;
 
         // UDB-based SDIO does not support io volt switch sequence
 
