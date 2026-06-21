@@ -786,7 +786,10 @@ impl<Ext> CardStatus<Ext> {
 pub struct RCA<Ext>(pub(crate) u32, pub(crate) PhantomData<Ext>);
 impl<Ext> From<R6> for RCA<Ext> {
     fn from(resp: R6) -> Self {
-        Self((resp.rca as u32) << 16 & resp.status as u32, PhantomData)
+        Self(
+            ((resp.rca as u32) << 16) | (resp.status as u32),
+            PhantomData,
+        )
     }
 }
 impl<Ext> RCA<Ext> {

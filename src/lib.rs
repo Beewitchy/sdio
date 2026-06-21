@@ -7,7 +7,7 @@
 //! PLSS_v7_10: Physical Layer Specification Simplified Specification Version
 //! 7.10. March 25, 2020. (C) SD Card Association
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 
 use aligned::{A4, Aligned};
 use embedded_hal_async::delay::DelayNs;
@@ -652,7 +652,7 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
         let block_size = cmd.block_size();
 
         self.bus
-            .send_command(set_block_length(block_size as u32))
+            .send_command(set_block_length(block_size.len() as u32))
             .await?;
         self.app_cmd(app_cmd).await?;
         let res = self.bus.read_blocks(cmd).await?;
@@ -674,7 +674,7 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
         let block_size = cmd.block_size();
 
         self.bus
-            .send_command(set_block_length(block_size as u32))
+            .send_command(set_block_length(block_size.len() as u32))
             .await?;
         self.app_cmd(app_cmd).await?;
         let res = self.bus.write_blocks(cmd).await?;

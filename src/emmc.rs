@@ -241,7 +241,7 @@ impl OCR<EMMC> {
     /// 0b00: byte mode
     /// 0b10: sector mode
     pub fn access_mode(&self) -> u8 {
-        (self.0 & 0x6000_0000 >> 29) as u8
+        ((self.0 & 0x6000_0000) >> 29) as u8
     }
 }
 impl fmt::Debug for OCR<EMMC> {
@@ -347,7 +347,7 @@ impl CSD<EMMC> {
         let erase_grp_size = (self.0 >> 42) & 0x1F;
         let erase_grp_mult = (self.0 >> 37) & 0x1F;
 
-        (erase_grp_size as u32 + 1) + (erase_grp_mult as u32 + 1)
+        (erase_grp_size as u32 + 1) * (erase_grp_mult as u32 + 1)
     }
 }
 impl fmt::Debug for CSD<EMMC> {

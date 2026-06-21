@@ -737,7 +737,7 @@ impl SDStatus {
     }
     /// Indicates N_Erase, in units of AU
     pub fn erase_size(&self) -> u16 {
-        (self.inner_word(13) & 0xFF) as u16 | ((self.inner_word(12) >> 24) & 0xFF) as u16
+        ((self.inner_word(13) & 0xFF) as u16) << 8 | ((self.inner_word(12) >> 24) & 0xFF) as u16
     }
     /// Indicates T_Erase / Erase Timeout (s)
     pub fn erase_timeout(&self) -> u8 {
@@ -936,6 +936,7 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
                 .await?,
         )
         .address();
+        self.info.rca = self.bus.rca;
 
         self.info.csd = self
             .bus
@@ -954,7 +955,7 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
         // Use 4-bit only if both the peripheral is configured for it AND the card supports it
         let (bus_width, acmd_arg) = match configured_bus_width {
             BusWidth::W4 if self.info.scr.bus_width_four() => (BusWidth::W4, 2),
-            _ => (BusWidth::W4, 0),
+            _ => (BusWidth::W1, 0),
         };
 
         self.bus

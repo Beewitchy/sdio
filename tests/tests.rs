@@ -2,10 +2,12 @@ use core::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use sdio::sd::Card;
+use sdio::common::{BlockSize, CSD, OCR, RCA};
+use sdio::emmc::EMMC;
+use sdio::sd::{Card, SD};
 use sdio::{
     BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand, ByteWriteCommand,
-    ControlCommand, MmcBus, MmcError, Response,
+    ControlCommand, MmcBus, MmcError, R3, R6, Response,
 };
 
 use aligned::Aligned;
@@ -34,6 +36,7 @@ struct CardState {
     freq: u32,
     storage: Vec<u8>,
     busy_until: Option<Instant>,
+    last_set_blocklen: Option<u32>,
 }
 
 impl CardState {
@@ -52,6 +55,7 @@ impl CardState {
             freq: INIT_FREQ,
             storage: vec![0xFF; size_bytes],
             busy_until: None,
+            last_set_blocklen: None,
         }
     }
 
@@ -82,6 +86,11 @@ impl DummyMmcBus {
         Self {
             state: Arc::new(Mutex::new(CardState::new(size_bytes))),
         }
+    }
+
+    /// Clone the shared state handle so tests can inspect/seed the card.
+    fn state(&self) -> Arc<Mutex<CardState>> {
+        self.state.clone()
     }
 
     fn wait_busy_if_needed<R: Response>(state: &mut CardState) -> Result<(), MmcError> {
@@ -154,8 +163,8 @@ impl MmcBus for DummyMmcBus {
                     Ok(DummyMmcBus::make_response(st.cid))
                 }
                 3 => {
-                    // CMD3: SEND_RELATIVE_ADDR
-                    Ok(DummyMmcBus::make_response([st.rca as u32, 0, 0, 0]))
+                    // CMD3: SEND_RELATIVE_ADDR — RCA is published in bits [31:16].
+                    Ok(DummyMmcBus::make_response([(st.rca as u32) << 16, 0, 0, 0]))
                 }
                 6 => {
                     // CMD6 — SWITCH_FUNCTION (SD mode)
@@ -211,7 +220,9 @@ impl MmcBus for DummyMmcBus {
                     // Real SD cards in SD mode always accept this command,
                     // but the block length is fixed to 512 bytes.
                     //
-                    // We ignore the argument and return success.
+                    // We ignore the argument for storage, but record it so tests can
+                    // verify the host sends the block length in bytes (not an enum tag).
+                    st.last_set_blocklen = Some(cmd.arg());
                     Ok(DummyMmcBus::make_response([0, 0, 0, 0]))
                 }
                 _ => {
@@ -297,7 +308,7 @@ impl MmcBus for DummyMmcBus {
             DummyMmcBus::wait_busy_if_needed::<C::Resp<'_>>(&mut st)?;
 
             let block = cmd.arg() as usize;
-            let bs = cmd.block_size() as usize;
+            let bs = cmd.block_size().len();
             let count = cmd.block_count() as usize;
             let start = block * bs;
             let end = start + bs * count;
@@ -511,3 +522,88 @@ async fn test_out_of_bounds_read() {
 //
 //     assert!(matches!(err, MmcError::Io));
 // }
+
+// ---------------------------------------------------------------------------
+// Regression tests for upstream parsing/protocol bug fixes
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_rca_from_r6_preserves_address_and_status() {
+    // RCA must be `(rca << 16) | status`, not `(rca << 16) & status`.
+    let rca: RCA<SD> = R6 {
+        rca: 0x0007,
+        status: 0x0500,
+    }
+    .into();
+    assert_eq!(rca.address(), 0x0007);
+    assert_eq!(rca.status(), 0x0500);
+}
+
+#[tokio::test]
+async fn test_card_rca_is_populated() {
+    // acquire() must copy the working RCA into Card so high-speed CMD13 et al.
+    // address the card instead of RCA 0.
+    let dev = make_device().await;
+    assert_eq!(dev.card().rca, 0x1234);
+}
+
+#[test]
+fn test_block_size_len_is_byte_count_not_discriminant() {
+    // The enum tag is not the byte count; only len() returns 512.
+    assert_eq!(BlockSize::B512.len(), 512);
+    assert_ne!(BlockSize::B512 as usize, 512);
+}
+
+#[tokio::test]
+async fn test_set_block_length_uses_byte_count() {
+    // A 512-byte block read must issue CMD16 with arg 512 (the byte count),
+    // not the BlockSize enum discriminant.
+    let bus = DummyMmcBus::new(CARD_BYTES);
+    let state = bus.state();
+    let mut dev = BlockDevice::<Card, _, _, BLOCK_SIZE>::new_sd_card(bus, INIT_FREQ, NoopDelay)
+        .await
+        .unwrap();
+
+    let mut block = Aligned([0u8; BLOCK_SIZE]);
+    dev.read(0, std::slice::from_mut(&mut block)).await.unwrap();
+
+    assert_eq!(
+        state.lock().unwrap().last_set_blocklen,
+        Some(BLOCK_SIZE as u32)
+    );
+}
+
+#[test]
+fn test_emmc_access_mode_reads_high_bits() {
+    // Sector mode = OCR bits [30:29] == 0b10; the precedence bug read bits [1:0].
+    let sector: OCR<EMMC> = R3 { ocr: 0x4000_0000 }.into();
+    assert_eq!(sector.access_mode(), 0b10);
+
+    let byte: OCR<EMMC> = R3 { ocr: 0x0000_0000 }.into();
+    assert_eq!(byte.access_mode(), 0b00);
+}
+
+#[test]
+fn test_emmc_erase_size_blocks_multiplies() {
+    // (erase_grp_size + 1) * (erase_grp_mult + 1); was erroneously a sum.
+    let csd: CSD<EMMC> = (((3u128) << 42) | (4u128 << 37)).into();
+    assert_eq!(csd.erase_size_blocks(), (3 + 1) * (4 + 1));
+}
+
+#[tokio::test]
+async fn test_sd_status_erase_size_combines_bytes() {
+    // ERASE_SIZE is a 16-bit field split across two status bytes; the high byte
+    // must be shifted up, not OR-ed onto the low byte.
+    let bus = DummyMmcBus::new(CARD_BYTES);
+    let state = bus.state();
+    {
+        let mut st = state.lock().unwrap();
+        st.storage[52] = 0x12; // high byte
+        st.storage[51] = 0x34; // low byte
+    }
+    let dev = BlockDevice::<Card, _, _, BLOCK_SIZE>::new_sd_card(bus, INIT_FREQ, NoopDelay)
+        .await
+        .unwrap();
+
+    assert_eq!(dev.card().status.erase_size(), 0x1234);
+}

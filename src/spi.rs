@@ -11,6 +11,21 @@ pub trait SetHz {
     fn set_hz(&mut self, hz: u32);
 }
 
+/// CRC7 over the 5 command bytes (start+index+arg), poly x^7+x^3+1 (0x89).
+fn crc7(data: &[u8]) -> u8 {
+    let mut crc: u8 = 0;
+    for &byte in data {
+        crc ^= byte;
+        for _ in 0..8 {
+            if crc & 0x80 != 0 {
+                crc ^= 0x89;
+            }
+            crc <<= 1;
+        }
+    }
+    crc >> 1
+}
+
 pub struct SpiMmcBus<SPI, CS, DLY> {
     spi: SPI,
     cs: CS,
@@ -39,18 +54,6 @@ impl<SPI, CS, DLY> SpiMmcBus<SPI, CS, DLY> {
         Ok(())
     }
 
-    fn crc7(mut v: u32) -> u8 {
-        let mut crc: u8 = 0;
-        for _ in 0..40 {
-            crc <<= 1;
-            if ((v & 0x8000_0000) != 0) ^ ((crc & 0x80) != 0) {
-                crc ^= 0x09;
-            }
-            v <<= 1;
-        }
-        (crc << 1) | 1
-    }
-
     async fn send_cmd_header<C: Command>(&mut self, cmd: &C) -> Result<(), MmcError>
     where
         SPI: SpiBus<u8>,
@@ -60,17 +63,16 @@ impl<SPI, CS, DLY> SpiMmcBus<SPI, CS, DLY> {
 
         let idx = cmd.index() & 0x3F;
         let arg = cmd.arg();
-        let header = ((0x40u32 | idx as u32) << 24) | (arg >> 8);
-        let crc = Self::crc7(header);
 
-        let buf = [
+        let mut buf = [
             0x40 | idx,
             (arg >> 24) as u8,
             (arg >> 16) as u8,
             (arg >> 8) as u8,
             arg as u8,
-            crc,
+            0,
         ];
+        buf[5] = (crc7(&buf[..5]) << 1) | 1;
 
         self.spi.write(&buf).await.map_err(|_| MmcError::Io)
     }
@@ -128,7 +130,7 @@ impl<SPI, CS, DLY> SpiMmcBus<SPI, CS, DLY> {
         }
 
         let mut words = [0u32; 4];
-        for (i, chunk) in raw[..=total_bytes].chunks(4).enumerate() {
+        for (i, chunk) in raw[..=total_bytes].chunks(4).take(words.len()).enumerate() {
             let mut w = 0u32;
             for &b in chunk {
                 w = (w << 8) | b as u32;
@@ -214,7 +216,7 @@ where
         C: BlockReadCommand + 'a,
     {
         self.send_cmd_header(&cmd).await?;
-        let block_size = cmd.block_size() as usize;
+        let block_size = cmd.block_size().len();
         let total = block_size * cmd.block_count() as usize;
         let slice = &mut cmd.buf()[..total];
 
@@ -232,7 +234,7 @@ where
         C: BlockWriteCommand + 'a,
     {
         self.send_cmd_header(&cmd).await?;
-        let block_size = cmd.block_size() as usize;
+        let block_size = cmd.block_size().len();
         let total = block_size * cmd.block_count() as usize;
         let slice = &cmd.buf()[..total];
 
@@ -288,5 +290,23 @@ where
     async fn set_bus(&mut self, _width: BusWidth, hz: u32) -> Result<(), MmcError> {
         self.spi.set_hz(hz);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::crc7;
+
+    // Framed command CRC byte sent on the wire = (crc7 << 1) | 1.
+    fn framed(bytes: &[u8]) -> u8 {
+        (crc7(bytes) << 1) | 1
+    }
+
+    #[test]
+    fn crc7_matches_known_command_vectors() {
+        // SD spec well-known CRCs for these command frames.
+        assert_eq!(framed(&[0x40, 0x00, 0x00, 0x00, 0x00]), 0x95); // CMD0
+        assert_eq!(framed(&[0x51, 0x00, 0x00, 0x00, 0x00]), 0x55); // CMD17, arg 0
+        assert_eq!(framed(&[0x48, 0x00, 0x00, 0x01, 0xAA]), 0x87); // CMD8, arg 0x1AA
     }
 }
