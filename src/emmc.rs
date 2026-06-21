@@ -611,7 +611,7 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Emmc, B, D, BLO
             .send_command(modify_ext_csd(AccessMode::WriteByte, 183, widbus), false)
             .await?;
 
-        self.bus.bus.set_bus(bus_width, freq).await?;
+        self.bus.bus.set_bus(bus_width, freq)?;
         self.bus
             .read_blocks(send_ext_csd(&mut self.info.ext_csd), false)
             .await?;

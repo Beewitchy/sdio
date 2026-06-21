@@ -462,10 +462,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         .await?;
 
         // Up to 25Mhz
-        self.bus
-            .bus
-            .set_bus(bus_width, freq.clamp(0, 25_000_000))
-            .await?;
+        self.bus.bus.set_bus(bus_width, freq.clamp(0, 25_000_000))?;
 
         let hs_reg = self.cmd52_read(0, CCCR_HIGH_SPEED).await?;
         if freq > 25_000_000 && hs_reg & HIGH_SPEED_SHS != 0 {
@@ -473,7 +470,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
                 .await?;
 
             // Up to max_f
-            self.bus.bus.set_bus(bus_width, freq).await?;
+            self.bus.bus.set_bus(bus_width, freq)?;
         }
 
         Ok(())

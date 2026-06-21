@@ -285,7 +285,7 @@ where
         Ok(())
     }
 
-    async fn set_bus(&mut self, _width: BusWidth, hz: u32) -> Result<(), MmcError> {
+    fn set_bus(&mut self, _width: BusWidth, hz: u32) -> Result<(), MmcError> {
         self.spi.set_hz(hz);
         Ok(())
     }

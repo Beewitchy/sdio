@@ -242,13 +242,22 @@ pub trait MmcBus {
     /// `hz` will always be `400_000`. The argument is provided so that the HAL does not have to define this.
     fn init_idle(&mut self, hz: u32) -> impl Future<Output = Result<(), MmcError>>;
 
+    /// Tune the bus, if required. Called after the bus is set to the target frequency; needed for uhs.
+    #[allow(unused_variables)]
+    fn tune_bus(
+        &mut self,
+        width: BusWidth,
+        hz: u32,
+        check_card: impl AsyncFnMut(&mut Self) -> bool,
+    ) -> impl Future<Output = Result<(), MmcError>> {
+        async { Ok(()) }
+    }
+
     /// Configure bus width and frequency.
     ///
     /// Will not be called with a frequency higher than `supports_frequency()` or a bus width above
     /// `supports_bus_width()`.
-    ///
-    /// If called above 25mhz, this function should configure the peripheral for high speed before returning.
-    fn set_bus(&mut self, width: BusWidth, hz: u32) -> impl Future<Output = Result<(), MmcError>>;
+    fn set_bus(&mut self, width: BusWidth, hz: u32) -> Result<(), MmcError>;
 
     /// Optional: whether the host supports native MMC mode. Otherwise, SPI mode is used.
     fn supports_mmc(&self) -> bool {
@@ -510,7 +519,7 @@ impl Response for R5 {
 }
 
 /// Check whether the card is ready for data
-pub async fn check_card(bus: &mut impl MmcBus, rca: u16) -> bool {
+async fn check_card(bus: &mut impl MmcBus, rca: u16) -> bool {
     if let Ok(status) = bus.send_command(common::card_status(rca, false)).await
         && CardStatus::<()>::from(status).ready_for_data()
     {

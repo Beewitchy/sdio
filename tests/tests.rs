@@ -382,17 +382,16 @@ impl MmcBus for DummyMmcBus {
         }
     }
 
-    fn set_bus(&mut self, width: BusWidth, hz: u32) -> impl Future<Output = Result<(), MmcError>> {
+    fn set_bus(&mut self, width: BusWidth, hz: u32) -> Result<(), MmcError> {
         let state = self.state.clone();
-        async move {
-            let mut st = state.lock().unwrap();
-            st.width = width;
-            st.freq = hz;
-            if hz > 25_000_000 {
-                st.high_speed = true;
-            }
-            Ok(())
+
+        let mut st = state.lock().unwrap();
+        st.width = width;
+        st.freq = hz;
+        if hz > 25_000_000 {
+            st.high_speed = true;
         }
+        Ok(())
     }
 
     fn supports_mmc(&self) -> bool {

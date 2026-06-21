@@ -6,7 +6,7 @@ use embedded_hal_async::delay::DelayNs;
 pub use crate::common::*;
 use crate::{
     Addressable, BlockCommand, BlockDevice, BlockReadCommand, BusAdapter, BusWidth, Command,
-    ControlCommand, MmcBus, MmcError, R1, R3, R6, R7, Signalling, common, sd,
+    ControlCommand, MmcBus, MmcError, R1, R3, R6, R7, Signalling, check_card, common, sd,
 };
 
 /// Type marker for SD-specific extensions.
@@ -904,7 +904,7 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
             //
             // Switch to requested frequency
             //
-            self.bus.bus.set_bus(BusWidth::W1, freq).await?;
+            self.bus.bus.set_bus(BusWidth::W1, freq)?;
 
             return Ok(());
         }
@@ -962,10 +962,7 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
             .await?;
 
         // Up to 25Mhz
-        self.bus
-            .bus
-            .set_bus(bus_width, freq.clamp(0, 25_000_000))
-            .await?;
+        self.bus.bus.set_bus(bus_width, freq.clamp(0, 25_000_000))?;
 
         // Read status
         self.bus
@@ -984,7 +981,14 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
 
             if request == self.switch_signalling_mode(request).await? {
                 // Up to max_f
-                self.bus.bus.set_bus(bus_width, freq).await?;
+                self.bus.bus.set_bus(bus_width, freq)?;
+
+                self.bus
+                    .bus
+                    .tune_bus(bus_width, freq, async |bus| {
+                        check_card(bus, self.bus.rca).await
+                    })
+                    .await?;
 
                 let status: CardStatus<SD> = self
                     .bus
@@ -995,6 +999,8 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
                 if status.state() != CurrentState::Transfer {
                     return Err(MmcError::SignalingSwitchFailed);
                 }
+            } else {
+                return Err(MmcError::SignalingSwitchFailed);
             }
 
             // Read status after signalling change
