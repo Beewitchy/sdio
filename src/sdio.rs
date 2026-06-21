@@ -9,9 +9,8 @@ use embedded_hal_async::delay::DelayNs;
 
 use crate::{
     BlockCommand, BlockReadCommand, BlockWriteCommand, BusAdapter, BusWidth, ByteCommand,
-    ByteReadCommand, ByteWriteCommand, Command, ControlCommand, INIT_FREQ, MmcBus, MmcError, R4,
-    R5,
-    sd::{self, OCR, RCA},
+    ByteReadCommand, ByteWriteCommand, Command, ControlCommand, MmcBus, MmcError, R4, R5,
+    sd::{self, BlockSize, OCR, RCA, block_size},
 };
 
 /// Type marker for SD-specific extensions.
@@ -170,8 +169,8 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd53BlockRead<'a, BLOCK_SIZE> {
 }
 
 impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd53BlockRead<'a, BLOCK_SIZE> {
-    fn block_size(&self) -> u16 {
-        BLOCK_SIZE as u16
+    fn block_size(&self) -> BlockSize {
+        block_size(BLOCK_SIZE)
     }
 
     fn block_count(&self) -> u32 {
@@ -217,8 +216,8 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd53BlockWrite<'a, BLOCK_SIZE> {
 }
 
 impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd53BlockWrite<'a, BLOCK_SIZE> {
-    fn block_size(&self) -> u16 {
-        BLOCK_SIZE as u16
+    fn block_size(&self) -> BlockSize {
+        block_size(BLOCK_SIZE)
     }
 
     fn block_count(&self) -> u32 {
@@ -417,11 +416,11 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         // Clamp the frequency to the supported bus frequency.
         let freq = freq.clamp(0, self.bus.bus.supports_frequency());
 
-        // While the SD/SDIO card or eMMC is in identification mode,
-        // the SDMMC_CK frequency must be no more than 400 kHz.
-        self.bus.bus.init_idle(INIT_FREQ).await?;
+        // Get the bus width configured in the Sdmmc peripheral
+        let bus_width = self.bus.bus.supports_bus_width();
 
-        // TODO: impl. loop timeouts
+        // Go.
+        self.bus.init_idle().await?;
 
         // Get IO OCR
         // Note: this is a rather simplistic timeout loop. It can be improved later.
@@ -462,10 +461,9 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         let cap = self.cmd52_read(0, CCCR_CARD_CAP).await?;
 
         // Determine the widest bus the card AND host both support.
-        let host_width = self.bus.bus.supports_bus_width();
         let card_supports_4bit = cap & CARD_CAP_4BLS != 0 || cap & CARD_CAP_LSC == 0;
 
-        let (bus_width_reg, bus_width) = if matches!(host_width, BusWidth::W4) && card_supports_4bit
+        let (bus_width_reg, bus_width) = if matches!(bus_width, BusWidth::W4) && card_supports_4bit
         {
             (BUS_CTRL_WIDTH_4BIT, BusWidth::W4)
         } else {
