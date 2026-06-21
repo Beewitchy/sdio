@@ -6,7 +6,7 @@ use embedded_hal_async::delay::DelayNs;
 pub use crate::common::*;
 use crate::{
     Addressable, BlockCommand, BlockDevice, BlockReadCommand, BusAdapter, BusWidth, Command,
-    ControlCommand, INIT_FREQ, MmcBus, MmcError, R1, R3, R6, R7, Signalling, common, sd,
+    ControlCommand, MmcBus, MmcError, R1, R3, R6, R7, Signalling, common, sd,
 };
 
 /// Type marker for SD-specific extensions.
@@ -51,8 +51,8 @@ impl<'a> Command for Cmd6<'a> {
     }
 }
 impl<'a> BlockCommand for Cmd6<'a> {
-    fn block_size(&self) -> u16 {
-        64
+    fn block_size(&self) -> BlockSize {
+        block_size(64)
     }
 
     fn block_count(&self) -> u32 {
@@ -290,8 +290,8 @@ impl<'a> Command for Acmd13<'a> {
     }
 }
 impl<'a> BlockCommand for Acmd13<'a> {
-    fn block_size(&self) -> u16 {
-        64
+    fn block_size(&self) -> BlockSize {
+        block_size(64)
     }
     fn block_count(&self) -> u32 {
         1
@@ -359,8 +359,8 @@ impl<'a> Command for Acmd51<'a> {
     }
 }
 impl<'a> BlockCommand for Acmd51<'a> {
-    fn block_size(&self) -> u16 {
-        8
+    fn block_size(&self) -> BlockSize {
+        block_size(8)
     }
     fn block_count(&self) -> u32 {
         1
@@ -595,10 +595,9 @@ impl CSD<SD> {
     }
     /// Card size in bytes
     pub fn card_size(&self) -> u64 {
-        let block_size_bytes = 1 << self.block_length() as u64;
-
-        self.block_count() * block_size_bytes
+        self.block_count() * self.block_length().len() as u64
     }
+
     /// Erase size (in blocks)
     pub fn erase_size_blocks(&self) -> u32 {
         if (self.0 >> 46) & 1 == 1 {
@@ -860,11 +859,8 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
             bus_width => bus_width,
         };
 
-        // While the SD/SDIO card or eMMC is in identification mode,
-        // the SDMMC_CK frequency must be no more than 400 kHz.
-        self.bus.bus.init_idle(INIT_FREQ).await?;
-
-        self.bus.send_command(common::idle(), false).await?;
+        // Go.
+        self.bus.init_idle().await?;
 
         // Check if cards supports CMD8 (with pattern)
         let cic: CIC = self

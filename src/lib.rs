@@ -13,7 +13,7 @@ use aligned::{A4, Aligned};
 use embedded_hal_async::delay::DelayNs;
 
 use crate::sd::{
-    CardCapacity, CardStatus, read_multiple_blocks, read_single_block, set_block_length,
+    BlockSize, CardCapacity, CardStatus, read_multiple_blocks, read_single_block, set_block_length,
     write_multiple_blocks, write_single_block,
 };
 
@@ -44,6 +44,7 @@ pub enum BusWidth {
     W8,
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum ResponseLen {
     Zero,
     R48,
@@ -137,7 +138,7 @@ pub trait Command {
 ///
 pub trait BlockCommand: Command {
     /// Size of each block in bytes (usually 512 for SD/MMC).
-    fn block_size(&self) -> u16;
+    fn block_size(&self) -> BlockSize;
 
     /// Number of blocks to transfer.
     fn block_count(&self) -> u32;
@@ -516,6 +517,19 @@ struct BusAdapter<B: MmcBus, D: DelayNs> {
 }
 
 impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
+    pub async fn init_idle(&mut self) -> Result<(), MmcError> {
+        // While the SD/SDIO card or eMMC is in identification mode,
+        // the SDMMC_CK frequency must be no more than 400 kHz.
+        self.bus.init_idle(INIT_FREQ).await?;
+
+        // Wait 74 cycles
+        self.delay.delay_us(74_000_000 / INIT_FREQ).await;
+
+        self.send_command(common::idle(), false).await?;
+
+        Ok(())
+    }
+
     /// Select one card and place it into the _Tranfer State_
     ///
     /// If `None` is specifed for `card`, all cards are put back into

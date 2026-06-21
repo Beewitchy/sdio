@@ -269,7 +269,7 @@ impl MmcBus for DummyMmcBus {
             }
 
             let block = cmd.arg() as usize;
-            let bs = cmd.block_size() as usize;
+            let bs = cmd.block_size().len();
             let count = cmd.block_count() as usize;
             let start = block * bs;
             let end = start + bs * count;

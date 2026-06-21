@@ -176,8 +176,8 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd17<'a, BLOCK_SIZE> {
     }
 }
 impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd17<'a, BLOCK_SIZE> {
-    fn block_size(&self) -> u16 {
-        BLOCK_SIZE as u16
+    fn block_size(&self) -> BlockSize {
+        block_size(BLOCK_SIZE)
     }
     fn block_count(&self) -> u32 {
         1
@@ -213,8 +213,8 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd18<'a, BLOCK_SIZE> {
     }
 }
 impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd18<'a, BLOCK_SIZE> {
-    fn block_size(&self) -> u16 {
-        BLOCK_SIZE as u16
+    fn block_size(&self) -> BlockSize {
+        block_size(BLOCK_SIZE)
     }
 
     fn block_count(&self) -> u32 {
@@ -256,8 +256,8 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd24<'a, BLOCK_SIZE> {
     }
 }
 impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd24<'a, BLOCK_SIZE> {
-    fn block_size(&self) -> u16 {
-        BLOCK_SIZE as u16
+    fn block_size(&self) -> BlockSize {
+        block_size(BLOCK_SIZE)
     }
     fn block_count(&self) -> u32 {
         1
@@ -293,8 +293,8 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd25<'a, BLOCK_SIZE> {
     }
 }
 impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd25<'a, BLOCK_SIZE> {
-    fn block_size(&self) -> u16 {
-        BLOCK_SIZE as u16
+    fn block_size(&self) -> BlockSize {
+        block_size(BLOCK_SIZE)
     }
     fn block_count(&self) -> u32 {
         self.buf.len() as u32
@@ -376,23 +376,67 @@ impl Default for CardCapacity {
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum BlockSize {
-    #[non_exhaustive]
-    B1 = 0,
-    B2 = 1,
-    B4 = 2,
-    B8 = 3,
-    B16 = 4,
-    B32 = 5,
-    B64 = 6,
-    B128 = 7,
-    B256 = 8,
-    B512 = 9,
-    B1024 = 10,
-    B2048 = 11,
-    B4096 = 12,
-    B8192 = 13,
-    B16kB = 14,
-    Unknown = 15,
+    B1,
+    B2,
+    B4,
+    B8,
+    B16,
+    B32,
+    B64,
+    B128,
+    B256,
+    B512,
+    B1024,
+    B2048,
+    B4096,
+    B8192,
+    B16kB,
+    Unknown,
+}
+
+impl BlockSize {
+    // Length of the block size. Will return 0 if unknown.
+    pub const fn len(&self) -> usize {
+        match self {
+            BlockSize::B1 => 1,
+            BlockSize::B2 => 2,
+            BlockSize::B4 => 4,
+            BlockSize::B8 => 8,
+            BlockSize::B16 => 16,
+            BlockSize::B32 => 32,
+            BlockSize::B64 => 64,
+            BlockSize::B128 => 128,
+            BlockSize::B256 => 256,
+            BlockSize::B512 => 512,
+            BlockSize::B1024 => 1024,
+            BlockSize::B2048 => 2048,
+            BlockSize::B4096 => 4096,
+            BlockSize::B8192 => 8192,
+            BlockSize::B16kB => 16384,
+            _ => 0,
+        }
+    }
+}
+
+pub(crate) const fn block_size(len: usize) -> BlockSize {
+    match len {
+        1 => BlockSize::B1,
+        2 => BlockSize::B2,
+        4 => BlockSize::B4,
+        8 => BlockSize::B8,
+        16 => BlockSize::B16,
+        32 => BlockSize::B32,
+        64 => BlockSize::B64,
+        128 => BlockSize::B128,
+        256 => BlockSize::B256,
+        512 => BlockSize::B512,
+        1024 => BlockSize::B1024,
+        2048 => BlockSize::B2048,
+        4096 => BlockSize::B4096,
+        8192 => BlockSize::B8192,
+        16384 => BlockSize::B16kB,
+        _ => BlockSize::Unknown,
+    }
 }
 
 /// CURRENT_STATE enum. Used for R1 response in command queue mode in SD spec, or all R1 responses

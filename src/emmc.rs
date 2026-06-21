@@ -6,7 +6,7 @@ use embedded_hal_async::delay::DelayNs;
 pub use crate::common::*;
 use crate::{
     Addressable, BlockCommand, BlockDevice, BlockReadCommand, BusAdapter, BusWidth, Command,
-    ControlCommand, INIT_FREQ, MmcBus, MmcError, R1, R1b, R3, common,
+    ControlCommand, MmcBus, MmcError, R1, R1b, R3, common,
 };
 
 use core::{convert::TryInto, fmt, marker::PhantomData, str};
@@ -122,8 +122,8 @@ impl<'a> Command for Cmd8<'a> {
     }
 }
 impl<'a> BlockCommand for Cmd8<'a> {
-    fn block_size(&self) -> u16 {
-        512
+    fn block_size(&self) -> BlockSize {
+        block_size(512)
     }
     fn block_count(&self) -> u32 {
         1
@@ -561,13 +561,11 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Emmc, B, D, BLO
         // Clamp the frequency to the supported bus frequency.
         let freq = freq.clamp(0, self.bus.bus.supports_frequency());
 
+        // Get the bus width configured in the Sdmmc peripheral
         let bus_width = self.bus.bus.supports_bus_width();
 
-        // While the SD/SDIO card or eMMC is in identification mode,
-        // the SDMMC_CK frequency must be no more than 400 kHz.
-        self.bus.bus.init_idle(INIT_FREQ).await?;
-
-        self.bus.send_command(common::idle(), false).await?;
+        // Go.
+        self.bus.init_idle().await?;
 
         // Note: this is a rather simplistic timeout loop. It can be improved later.
         let mut i = 0;
