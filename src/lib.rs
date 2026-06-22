@@ -124,18 +124,7 @@ pub trait Command {
     fn arg(&self) -> u32;
 }
 
-/// ---------------------------------------------------------------------------
-/// BlockCommand and ByteCommand
-/// ---------------------------------------------------------------------------
-///
-/// These traits factor out shared behavior for block-mode and byte-mode
-/// transfers. SD/MMC/SDIO have two fundamentally different transfer modes:
-///
-///   • Block mode: fixed-size blocks (CMD17/18/24/25, CMD53 block mode)
-///   • Byte mode: arbitrary byte counts (CMD53 byte mode, SPI multi-byte)
-///
-/// Host controllers treat these differently, so the abstraction must too.
-///
+/// Block mode: fixed-size blocks (CMD17/18/24/25, CMD53 block mode)
 pub trait BlockCommand: Command {
     /// Size of each block in bytes (usually 512 for SD/MMC).
     fn block_size(&self) -> BlockSize;
@@ -144,41 +133,34 @@ pub trait BlockCommand: Command {
     fn block_count(&self) -> u32;
 }
 
+/// Byte mode: arbitrary byte counts (CMD53 byte mode, SPI multi-byte)
 pub trait ByteCommand: Command {
     /// Number of bytes to transfer (arbitrary length).
     fn byte_count(&self) -> usize;
 }
 
-/// ---------------------------------------------------------------------------
-/// Directional marker traits
-/// ---------------------------------------------------------------------------
-///
-/// These traits classify commands by *how* they are used:
-///
-///   • ControlCommand: commands with no data transfer (CMD0, CMD8, CMD55, etc.)
-///   • BlockReadCommand: block-mode read (CMD17, CMD18)
-///   • BlockWriteCommand: block-mode write (CMD24, CMD25)
-///   • ByteReadCommand: byte-mode read (CMD53 byte read)
-///   • ByteWriteCommand: byte-mode write (CMD53 byte write)
-///
-/// This prevents misuse at compile time:
-///   - You cannot pass CMD24 to read_blocks()
-///   - You cannot pass CMD17 to write_blocks()
-///   - You cannot pass CMD52 to block-mode functions
-///
+/// ControlCommand: commands with no data transfer (CMD0, CMD8, CMD55, etc.)
 pub trait ControlCommand: Command {}
+
+/// BlockReadCommand: block-mode read (CMD17, CMD18)
 pub trait BlockReadCommand: BlockCommand {
     /// Mutable buffer for block-mode reads. The length of this buffer must be `block_size()` * `block_count()`
     fn buf(&mut self) -> &mut Aligned<A4, [u8]>;
 }
+
+/// BlockWriteCommand: block-mode write (CMD24, CMD25)
 pub trait BlockWriteCommand: BlockCommand {
     /// Buffer for block-mode writes. The length of this buffer must be `block_size()` * `block_count()`
     fn buf(&self) -> &Aligned<A4, [u8]>;
 }
+
+/// ByteReadCommand: byte-mode read (CMD53 byte read)
 pub trait ByteReadCommand: ByteCommand {
     /// Mutable buffer for byte-mode reads. The length of this buffer must be `byte_count()`.
     fn buf(&mut self) -> &mut Aligned<A4, [u8]>;
 }
+
+/// ByteWriteCommand: byte-mode write (CMD53 byte write)
 pub trait ByteWriteCommand: ByteCommand {
     /// Buffer for byte-mode writes. The length of this buffer must be `byte_count()`.
     fn buf(&self) -> &Aligned<A4, [u8]>;
