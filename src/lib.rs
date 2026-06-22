@@ -381,6 +381,14 @@ impl R1 {
     /// Error bits defined in the SD Physical Spec §4.10.1 (Table 4-41).
     pub const ERR_MASK: u32 = 0xFDF9_8008;
 
+    pub fn to_result(&self) -> Result<(), MmcError> {
+        if self.is_error() {
+            Err(MmcError::Other)
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn is_error(&self) -> bool {
         self.status & Self::ERR_MASK != 0
     }
@@ -568,6 +576,14 @@ impl R5 {
         | Self::FLAG_FUNCTION_NUMBER
         | Self::FLAG_OUT_OF_RANGE;
 
+    pub fn to_result(&self) -> Result<(), MmcError> {
+        if self.is_error() {
+            Err(MmcError::Other)
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn is_error(&self) -> bool {
         self.flags & Self::ERROR_FLAGS != 0
     }
@@ -614,7 +630,10 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     /// Send the app command notification if this is an app command
     async fn app_cmd(&mut self, app_cmd: bool) -> Result<(), MmcError> {
         if app_cmd {
-            self.bus.send_command(sd::app_cmd(self.rca)).await?;
+            self.bus
+                .send_command(sd::app_cmd(self.rca))
+                .await?
+                .to_result()?
         }
 
         Ok(())
@@ -632,6 +651,13 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
         } else {
             false
         }
+    }
+
+    /// Set the block size if required
+    async fn set_block_size<C: BlockCommand>(&mut self, cmd: &C) -> Result<(), MmcError> {
+        self.send_command(set_block_length(cmd.block_size().len() as u32), false)
+            .await?
+            .to_result()
     }
 
     /// Wait for the card to be ready if required
@@ -730,11 +756,7 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
         cmd: C,
         app_cmd: bool,
     ) -> Result<C::Resp<'a>, MmcError> {
-        let block_size = cmd.block_size();
-
-        self.bus
-            .send_command(set_block_length(block_size.len() as u32))
-            .await?;
+        self.set_block_size(&cmd).await?;
         self.app_cmd(app_cmd).await?;
         let res = self.bus.read_blocks(cmd).await?;
         self.wait_if_required::<C::Resp<'a>>().await?;
@@ -752,11 +774,7 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
         cmd: C,
         app_cmd: bool,
     ) -> Result<C::Resp<'a>, MmcError> {
-        let block_size = cmd.block_size();
-
-        self.bus
-            .send_command(set_block_length(block_size.len() as u32))
-            .await?;
+        self.set_block_size(&cmd).await?;
         self.app_cmd(app_cmd).await?;
         let res = self.bus.write_blocks(cmd).await?;
         self.wait_if_required::<C::Resp<'a>>().await?;
