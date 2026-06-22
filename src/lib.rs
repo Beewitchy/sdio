@@ -765,21 +765,6 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     }
 }
 
-/// Represents either an SD or EMMC card
-pub trait Addressable: Sized + Clone {
-    /// Associated type
-    type Ext;
-
-    /// Is this a standard or high capacity peripheral?
-    fn get_capacity(&self) -> CardCapacity;
-
-    /// Size in bytes
-    fn size(&self) -> u64;
-
-    /// Whether the device supports `CMD23 (SET_BLOCK_COUNT)`.
-    fn supports_cmd23(&self) -> bool;
-}
-
 /// The signalling scheme used on the SDMMC bus
 #[non_exhaustive]
 #[allow(missing_docs)]
@@ -793,6 +778,30 @@ pub enum Signalling {
     DDR50,
 }
 
+/// Represents either an SD or EMMC card
+trait Acquireable: Sized + Clone + Default {
+    fn acquire<B: MmcBus, D: DelayNs>(
+        bus: &mut BusAdapter<B, D>,
+        freq: u32,
+    ) -> impl Future<Output = Result<Self, MmcError>>;
+}
+
+/// Represents either an SD or EMMC card
+#[allow(private_bounds)]
+pub trait Addressable: Acquireable {
+    /// Associated type
+    type Ext;
+
+    /// Is this a standard or high capacity peripheral?
+    fn get_capacity(&self) -> CardCapacity;
+
+    /// Size in bytes
+    fn size(&self) -> u64;
+
+    /// Whether the device supports `CMD23 (SET_BLOCK_COUNT)`.
+    fn supports_cmd23(&self) -> bool;
+}
+
 /// Represents a block storage device
 pub struct BlockDevice<T: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> {
     info: T,
@@ -803,6 +812,30 @@ pub struct BlockDevice<T: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: 
 impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
     BlockDevice<A, B, D, BLOCK_SIZE>
 {
+    /// Create a new block device
+    pub async fn new(bus: B, delay: D, freq: u32) -> Result<Self, MmcError> {
+        let mut this = Self::new_uninit(bus, delay);
+        this.reacquire(freq).await?;
+
+        Ok(this)
+    }
+
+    /// Create a new uninit block device
+    pub fn new_uninit(bus: B, delay: D) -> Self {
+        Self {
+            info: A::default(),
+            bus: BusAdapter { bus, delay, rca: 0 },
+        }
+    }
+
+    /// Reacquire the device
+    pub async fn reacquire(&mut self, freq: u32) -> Result<(), MmcError> {
+        self.bus.init_idle().await?;
+        self.info = A::acquire(&mut self.bus, freq).await?;
+
+        Ok(())
+    }
+
     /// Get the card info
     pub fn card(&self) -> A {
         self.info.clone()

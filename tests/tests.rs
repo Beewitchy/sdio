@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use sdio::common::{BlockSize, CSD, OCR, RCA};
 use sdio::emmc::EMMC;
-use sdio::sd::{Card, SD};
+use sdio::sd::{SD, SdCard as Card};
 use sdio::{
     BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand, ByteWriteCommand,
     ControlCommand, MmcBus, MmcError, R3, R6, Response,

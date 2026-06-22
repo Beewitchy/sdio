@@ -5,8 +5,8 @@ use embedded_hal_async::delay::DelayNs;
 
 pub use crate::common::*;
 use crate::{
-    Addressable, BlockCommand, BlockDevice, BlockReadCommand, BusAdapter, BusWidth, Command,
-    ControlCommand, MmcBus, MmcError, R1, R1b, R3, common,
+    Acquireable, Addressable, BlockCommand, BlockDevice, BlockReadCommand, BusAdapter, BusWidth,
+    Command, ControlCommand, MmcBus, MmcError, R1, R1b, R3, common,
 };
 
 use core::{convert::TryInto, fmt, marker::PhantomData, str};
@@ -534,66 +534,41 @@ impl Addressable for Emmc {
     }
 }
 
-/// Card Storage Device
-impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Emmc, B, D, BLOCK_SIZE> {
-    /// Create a new EMMC
-    pub async fn new_emmc(bus: B, freq: u32, delay: D) -> Result<Self, MmcError> {
-        let mut s = Self::new_uninit_emmc(bus, delay);
+impl Acquireable for Emmc {
+    async fn acquire<B: MmcBus, D: DelayNs>(
+        bus: &mut BusAdapter<B, D>,
+        freq: u32,
+    ) -> Result<Self, MmcError> {
+        let mut this = Self::default();
 
-        s.acquire(freq).await?;
-
-        Ok(s)
-    }
-
-    /// Create a uninit EMMC
-    pub fn new_uninit_emmc(bus: B, delay: D) -> Self {
-        Self {
-            info: Emmc::default(),
-            bus: BusAdapter { bus, delay, rca: 0 },
-        }
-    }
-
-    /// Initializes the card into a known state (or at least tries to).
-    pub async fn reacquire(&mut self, freq: u32) -> Result<(), MmcError> {
-        self.acquire(freq).await
-    }
-
-    /// Initializes the card into a known state (or at least tries to).
-    async fn acquire(&mut self, freq: u32) -> Result<(), MmcError> {
         // Clamp the frequency to the supported bus frequency.
-        let freq = freq.clamp(0, self.bus.bus.supports_frequency());
+        let freq = freq.clamp(0, bus.bus.supports_frequency());
 
         // Get the bus width configured in the Sdmmc peripheral
-        let bus_width = self.bus.bus.supports_bus_width();
-
-        // Go.
-        self.bus.init_idle().await?;
+        let bus_width = bus.bus.supports_bus_width();
 
         let high_voltage = 0b0 << 7;
         let access_mode = 0b10 << 29;
         let op_cond = high_voltage | access_mode | 0b1_1111_1111 << 15;
 
-        self.info.ocr = self.bus.get_ocr(&send_op_cond(op_cond), false).await?;
+        this.ocr = bus.get_ocr(&send_op_cond(op_cond), false).await?;
 
-        self.info.cid = self
-            .bus
+        this.cid = bus
             .send_command(common::all_send_cid(), false)
             .await?
             .into();
 
-        self.bus.rca = 1u16.into();
+        bus.rca = 1u16.into();
 
-        self.bus
-            .send_command(assign_relative_address(self.bus.rca), false)
+        bus.send_command(assign_relative_address(bus.rca), false)
             .await?;
 
-        self.info.csd = self
-            .bus
-            .send_command(common::send_csd(self.bus.rca), false)
+        this.csd = bus
+            .send_command(common::send_csd(bus.rca), false)
             .await?
             .into();
 
-        self.bus.select_card(Some(self.bus.rca)).await?;
+        bus.select_card(Some(bus.rca)).await?;
 
         let widbus = match bus_width {
             BusWidth::W1 => 0,
@@ -601,16 +576,27 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Emmc, B, D, BLO
             BusWidth::W8 => 2,
         };
 
-        self.bus
-            .send_command(modify_ext_csd(AccessMode::WriteByte, 183, widbus), false)
+        bus.send_command(modify_ext_csd(AccessMode::WriteByte, 183, widbus), false)
             .await?;
 
-        self.bus.bus.set_bus(bus_width, freq)?;
+        bus.bus.set_bus(bus_width, freq)?;
 
-        self.bus
-            .read_blocks(send_ext_csd(&mut self.info.ext_csd), false)
+        bus.read_blocks(send_ext_csd(&mut this.ext_csd), false)
             .await?;
 
-        Ok(())
+        Ok(this)
+    }
+}
+
+/// Card Storage Device
+impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Emmc, B, D, BLOCK_SIZE> {
+    /// Create a new SD card
+    pub async fn new_emmc(bus: B, freq: u32, delay: D) -> Result<Self, MmcError> {
+        Self::new(bus, delay, freq).await
+    }
+
+    /// Create a uninit SD card
+    pub fn new_uninit_emmc(bus: B, delay: D) -> Self {
+        Self::new_uninit(bus, delay)
     }
 }

@@ -5,8 +5,8 @@ use embedded_hal_async::delay::DelayNs;
 
 pub use crate::common::*;
 use crate::{
-    Addressable, BlockCommand, BlockDevice, BlockReadCommand, BusAdapter, BusWidth, Command,
-    ControlCommand, MmcBus, MmcError, R1, R3, R6, R7, Signalling, common, sd,
+    Acquireable, Addressable, BlockCommand, BlockDevice, BlockReadCommand, BusAdapter, BusWidth,
+    Command, ControlCommand, MmcBus, MmcError, R1, R3, R6, R7, Signalling, common, sd,
 };
 
 /// Type marker for SD-specific extensions.
@@ -787,7 +787,7 @@ impl RCA<SD> {
 
 #[derive(Clone, Copy, Debug, Default)]
 /// SD Card
-pub struct Card {
+pub struct SdCard {
     /// Operation Conditions Register
     pub ocr: OCR<SD>,
     /// Card ID
@@ -800,7 +800,7 @@ pub struct Card {
     pub status: SDStatus,
 }
 
-impl Addressable for Card {
+impl Addressable for SdCard {
     type Ext = SD;
 
     /// Is this a standard or high capacity peripheral?
@@ -824,50 +824,24 @@ impl Addressable for Card {
     }
 }
 
-/// Card Storage Device
-impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLOCK_SIZE> {
-    /// Create a new SD card
-    pub async fn new_sd_card(bus: B, freq: u32, delay: D) -> Result<Self, MmcError> {
-        let mut s = Self::new_uninit_sd_card(bus, delay);
+impl Acquireable for SdCard {
+    async fn acquire<B: MmcBus, D: DelayNs>(
+        bus: &mut BusAdapter<B, D>,
+        freq: u32,
+    ) -> Result<Self, MmcError> {
+        let mut this = Self::default();
 
-        s.acquire(freq).await?;
-
-        Ok(s)
-    }
-
-    /// Create a uninit SD card
-    pub fn new_uninit_sd_card(bus: B, delay: D) -> Self {
-        Self {
-            info: Card::default(),
-            bus: BusAdapter { bus, delay, rca: 0 },
-        }
-    }
-
-    /// Initializes the card into a known state (or at least tries to).
-    pub async fn reacquire(&mut self, freq: u32) -> Result<(), MmcError> {
-        self.acquire(freq).await
-    }
-
-    /// Initializes the card into a known state (or at least tries to).
-    async fn acquire(&mut self, freq: u32) -> Result<(), MmcError> {
         // Clamp the frequency to the supported bus frequency.
-        let freq = freq.clamp(0, self.bus.bus.supports_frequency());
+        let freq = freq.clamp(0, bus.bus.supports_frequency());
 
         // Get the bus width configured in the Sdmmc peripheral
-        let configured_bus_width = match self.bus.bus.supports_bus_width() {
+        let configured_bus_width = match bus.bus.supports_bus_width() {
             BusWidth::W8 => return Err(MmcError::Unsupported),
             bus_width => bus_width,
         };
 
-        // Go.
-        self.bus.init_idle().await?;
-
         // Check if cards supports CMD8 (with pattern)
-        let cic: CIC = self
-            .bus
-            .send_command(send_if_cond(1, 0xAA), false)
-            .await?
-            .into();
+        let cic: CIC = bus.send_command(send_if_cond(1, 0xAA), false).await?.into();
 
         if cic.check_pattern != 0xAA {
             return Err(MmcError::Unsupported);
@@ -882,24 +856,23 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
         // a UHS-capable card may enter a partly-switched state when
         // we never follow up with CMD11. v1/v2 builds always read
         // `false` here (`has_vswitch` is hard-coded false).
-        self.info.ocr = self
-            .bus
+        this.ocr = bus
             .get_ocr(
-                &sd_send_op_cond(true, false, self.bus.bus.supports_1v8(), 1 << 5),
+                &sd_send_op_cond(true, false, bus.bus.supports_1v8(), 1 << 5),
                 true,
             )
             .await?;
 
-        if !self.bus.bus.supports_mmc() {
+        if !bus.bus.supports_mmc() {
             // SPI mode
-            self.info.ocr = self.bus.send_command(read_ocr(), false).await?.into();
+            this.ocr = bus.send_command(read_ocr(), false).await?.into();
 
             //
             // Switch to requested frequency
             //
-            self.bus.bus.set_bus(BusWidth::W1, freq)?;
+            bus.bus.set_bus(BusWidth::W1, freq)?;
 
-            return Ok(());
+            return Ok(this);
         }
 
         // UHS-I voltage switch. Per SD Physical Layer Spec §3.7.5 the
@@ -913,52 +886,41 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
         // the card accepted the S18A request (ocr.v18_allowed()). On
         // failure, fall through to 3.3V HS — `voltage_switch()`
         // already restored peripheral + GPIO state.
-        if self.bus.bus.supports_1v8() && self.info.ocr.v18_allowed() {
-            self.bus.send_command(voltage_switch(), false).await?;
+        if bus.bus.supports_1v8() && this.ocr.v18_allowed() {
+            bus.send_command(voltage_switch(), false).await?;
         }
 
-        self.info.cid = self
-            .bus
+        this.cid = bus
             .send_command(common::all_send_cid(), false)
             .await?
             .into();
 
-        self.bus.rca = RCA::<SD>::from(
-            self.bus
-                .send_command(send_relative_address(), false)
-                .await?,
-        )
-        .address();
+        bus.rca =
+            RCA::<SD>::from(bus.send_command(send_relative_address(), false).await?).address();
 
-        self.info.csd = self
-            .bus
-            .send_command(common::send_csd(self.bus.rca), false)
+        this.csd = bus
+            .send_command(common::send_csd(bus.rca), false)
             .await?
             .into();
 
-        self.bus.select_card(Some(self.bus.rca)).await?;
+        bus.select_card(Some(bus.rca)).await?;
 
-        self.bus
-            .read_blocks(sd::send_scr(&mut self.info.scr), true)
-            .await?;
+        bus.read_blocks(sd::send_scr(&mut this.scr), true).await?;
 
         // Select bus width based on Sdmmc configuration and card capability
         // Use 4-bit only if both the peripheral is configured for it AND the card supports it
         let (bus_width, acmd_arg) = match configured_bus_width {
-            BusWidth::W4 if self.info.scr.bus_width_four() => (BusWidth::W4, 2),
+            BusWidth::W4 if this.scr.bus_width_four() => (BusWidth::W4, 2),
             _ => (BusWidth::W1, 0),
         };
 
-        self.bus
-            .send_command(set_bus_width(acmd_arg == 2), true)
-            .await?;
+        bus.send_command(set_bus_width(acmd_arg == 2), true).await?;
 
         // Up to 25Mhz
-        self.bus.bus.set_bus(bus_width, freq.clamp(0, 25_000_000))?;
+        bus.bus.set_bus(bus_width, freq.clamp(0, 25_000_000))?;
 
         // Read status
-        self.bus
-            .read_blocks(sd::sd_status(&mut self.info.status), true)
+        bus.read_blocks(sd::sd_status(&mut this.status), true)
             .await?;
 
         if freq > 25_000_000 {
@@ -971,15 +933,15 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
                 Signalling::SDR25
             };
 
-            if request == self.switch_signalling_mode(request).await? {
+            if request == Self::switch_signalling_mode(bus, request).await? {
                 // Up to max_f
-                self.bus.bus.set_bus(bus_width, freq)?;
+                bus.bus.set_bus(bus_width, freq)?;
 
-                let status_cmd = common::card_status(self.bus.rca, false);
+                let status_cmd = common::card_status(bus.rca, false);
 
-                self.bus.bus.tune_bus(bus_width, freq, &status_cmd).await?;
+                bus.bus.tune_bus(bus_width, freq, &status_cmd).await?;
 
-                if CardStatus::<SD>::from(self.bus.send_command(&status_cmd, false).await?).state()
+                if CardStatus::<SD>::from(bus.send_command(&status_cmd, false).await?).state()
                     != CurrentState::Transfer
                 {
                     return Err(MmcError::SignalingSwitchFailed);
@@ -989,14 +951,15 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
             }
 
             // Read status after signalling change
-            self.bus
-                .read_blocks(sd::sd_status(&mut self.info.status), true)
+            bus.read_blocks(sd::sd_status(&mut this.status), true)
                 .await?;
         }
 
-        Ok(())
+        Ok(this)
     }
+}
 
+impl SdCard {
     /// Switch mode using CMD6.
     ///
     /// Attempt to set a new signalling mode. The selected
@@ -1004,8 +967,8 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
     /// frequency to be > 12.5MHz.
     ///
     /// SD only.
-    async fn switch_signalling_mode(
-        &mut self,
+    async fn switch_signalling_mode<B: MmcBus, D: DelayNs>(
+        bus: &mut BusAdapter<B, D>,
         signalling: Signalling,
     ) -> Result<Signalling, MmcError> {
         // NB PLSS v7_10 4.3.10.4: "the use of SET_BLK_LEN command is not
@@ -1023,15 +986,13 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
 
         let mut buf = Aligned([0u8; 64]);
 
-        self.bus
-            .read_blocks(cmd6(set_function, &mut buf), false)
-            .await?;
+        bus.read_blocks(cmd6(set_function, &mut buf), false).await?;
 
         // Host is allowed to use the new functions at least 8
         // clocks after the end of the switch command
         // transaction. We know the current clock period is < 80ns,
         // so a total delay of 640ns is required here
-        self.bus.delay.delay_ns(640).await;
+        bus.delay.delay_ns(640).await;
 
         // Function Selection of Function Group 1
         let selection =
@@ -1045,5 +1006,18 @@ impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLO
             4 => Ok(Signalling::DDR50),
             _ => Err(MmcError::Unsupported),
         }
+    }
+}
+
+/// Card Storage Device
+impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<SdCard, B, D, BLOCK_SIZE> {
+    /// Create a new SD card
+    pub async fn new_sd_card(bus: B, freq: u32, delay: D) -> Result<Self, MmcError> {
+        Self::new(bus, delay, freq).await
+    }
+
+    /// Create a uninit SD card
+    pub fn new_uninit_sd_card(bus: B, delay: D) -> Self {
+        Self::new_uninit(bus, delay)
     }
 }
