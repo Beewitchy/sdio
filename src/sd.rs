@@ -5,7 +5,7 @@ use embedded_hal_async::delay::DelayNs;
 
 pub use crate::common::*;
 use crate::{
-    Acquireable, Addressable, BlockCommand, BlockDevice, BlockReadCommand, BusAdapter, BusWidth,
+    Acquirable, Addressable, BlockCommand, BlockDevice, BlockReadCommand, BusAdapter, BusWidth,
     Command, ControlCommand, MmcBus, MmcError, R1, R3, R6, R7, Signalling, common, sd,
 };
 
@@ -857,7 +857,7 @@ impl Addressable for SdCard {
     }
 }
 
-impl Acquireable for SdCard {
+impl Acquirable for SdCard {
     async fn acquire<B: MmcBus, D: DelayNs>(
         bus: &mut BusAdapter<B, D>,
         freq: u32,

@@ -779,7 +779,7 @@ pub enum Signalling {
 }
 
 /// Represents either an SD or EMMC card
-trait Acquireable: Sized + Clone + Default {
+trait Acquirable: Sized + Clone + Default {
     fn acquire<B: MmcBus, D: DelayNs>(
         bus: &mut BusAdapter<B, D>,
         freq: u32,
@@ -788,7 +788,7 @@ trait Acquireable: Sized + Clone + Default {
 
 /// Represents either an SD or EMMC card
 #[allow(private_bounds)]
-pub trait Addressable: Acquireable {
+pub trait Addressable: Acquirable {
     /// Associated type
     type Ext;
 
