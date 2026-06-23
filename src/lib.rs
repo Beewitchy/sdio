@@ -816,8 +816,8 @@ pub trait Addressable: Acquirable {
     /// Is this a standard or high capacity peripheral?
     fn get_capacity(&self) -> CardCapacity;
 
-    /// Size in bytes
-    fn size(&self) -> u64;
+    /// Number of blocks in this card
+    fn block_count(&self) -> u32;
 
     /// Whether the device supports `CMD23 (SET_BLOCK_COUNT)`.
     fn supports_cmd23(&self) -> bool;
@@ -1018,6 +1018,6 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
     }
 
     async fn size(&mut self) -> Result<u64, Self::Error> {
-        Ok(self.info.size())
+        Ok(self.info.block_count() as u64 * BLOCK_SIZE as u64)
     }
 }

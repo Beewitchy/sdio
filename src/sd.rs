@@ -880,9 +880,8 @@ impl Addressable for Card {
         }
     }
 
-    /// Size in bytes
-    fn size(&self) -> u64 {
-        self.csd.block_count() * 512
+    fn block_count(&self) -> u32 {
+        self.csd.block_count() as u32
     }
 
     fn supports_cmd23(&self) -> bool {

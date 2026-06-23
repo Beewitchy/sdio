@@ -524,9 +524,8 @@ impl Addressable for Emmc {
         }
     }
 
-    /// Size in bytes
-    fn size(&self) -> u64 {
-        u64::from(self.ext_csd.sector_count()) * 512
+    fn block_count(&self) -> u32 {
+        self.ext_csd.sector_count()
     }
 
     fn supports_cmd23(&self) -> bool {
