@@ -13,8 +13,8 @@ use aligned::{A4, Aligned};
 use embedded_hal_async::delay::DelayNs;
 
 use crate::sd::{
-    BlockSize, CardCapacity, CardStatus, OCR, read_multiple_blocks, read_single_block,
-    set_block_length, write_multiple_blocks, write_single_block,
+    BlockSize, CardCapacity, CardStatus, OCR, block_size, read_multiple_blocks, read_single_block,
+    stop_transmission, write_multiple_blocks, write_single_block,
 };
 
 pub mod common;
@@ -124,18 +124,7 @@ pub trait Command {
     fn arg(&self) -> u32;
 }
 
-/// ---------------------------------------------------------------------------
-/// BlockCommand and ByteCommand
-/// ---------------------------------------------------------------------------
-///
-/// These traits factor out shared behavior for block-mode and byte-mode
-/// transfers. SD/MMC/SDIO have two fundamentally different transfer modes:
-///
-///   • Block mode: fixed-size blocks (CMD17/18/24/25, CMD53 block mode)
-///   • Byte mode: arbitrary byte counts (CMD53 byte mode, SPI multi-byte)
-///
-/// Host controllers treat these differently, so the abstraction must too.
-///
+/// Block mode: fixed-size blocks (CMD17/18/24/25, CMD53 block mode)
 pub trait BlockCommand: Command {
     /// Size of each block in bytes (usually 512 for SD/MMC).
     fn block_size(&self) -> BlockSize;
@@ -144,41 +133,34 @@ pub trait BlockCommand: Command {
     fn block_count(&self) -> u32;
 }
 
+/// Byte mode: arbitrary byte counts (CMD53 byte mode, SPI multi-byte)
 pub trait ByteCommand: Command {
     /// Number of bytes to transfer (arbitrary length).
     fn byte_count(&self) -> usize;
 }
 
-/// ---------------------------------------------------------------------------
-/// Directional marker traits
-/// ---------------------------------------------------------------------------
-///
-/// These traits classify commands by *how* they are used:
-///
-///   • ControlCommand: commands with no data transfer (CMD0, CMD8, CMD55, etc.)
-///   • BlockReadCommand: block-mode read (CMD17, CMD18)
-///   • BlockWriteCommand: block-mode write (CMD24, CMD25)
-///   • ByteReadCommand: byte-mode read (CMD53 byte read)
-///   • ByteWriteCommand: byte-mode write (CMD53 byte write)
-///
-/// This prevents misuse at compile time:
-///   - You cannot pass CMD24 to read_blocks()
-///   - You cannot pass CMD17 to write_blocks()
-///   - You cannot pass CMD52 to block-mode functions
-///
+/// ControlCommand: commands with no data transfer (CMD0, CMD8, CMD55, etc.)
 pub trait ControlCommand: Command {}
+
+/// BlockReadCommand: block-mode read (CMD17, CMD18)
 pub trait BlockReadCommand: BlockCommand {
     /// Mutable buffer for block-mode reads. The length of this buffer must be `block_size()` * `block_count()`
     fn buf(&mut self) -> &mut Aligned<A4, [u8]>;
 }
+
+/// BlockWriteCommand: block-mode write (CMD24, CMD25)
 pub trait BlockWriteCommand: BlockCommand {
     /// Buffer for block-mode writes. The length of this buffer must be `block_size()` * `block_count()`
     fn buf(&self) -> &Aligned<A4, [u8]>;
 }
+
+/// ByteReadCommand: byte-mode read (CMD53 byte read)
 pub trait ByteReadCommand: ByteCommand {
     /// Mutable buffer for byte-mode reads. The length of this buffer must be `byte_count()`.
     fn buf(&mut self) -> &mut Aligned<A4, [u8]>;
 }
+
+/// ByteWriteCommand: byte-mode write (CMD53 byte write)
 pub trait ByteWriteCommand: ByteCommand {
     /// Buffer for byte-mode writes. The length of this buffer must be `byte_count()`.
     fn buf(&self) -> &Aligned<A4, [u8]>;
@@ -244,12 +226,15 @@ pub trait MmcBus {
 
     /// Tune the bus, if required. Called after the bus is set to the target frequency; needed for uhs.
     #[allow(unused_variables)]
-    fn tune_bus(
+    fn tune_bus<O>(
         &mut self,
         width: BusWidth,
         hz: u32,
-        check_card: impl AsyncFnMut(&mut Self) -> bool,
-    ) -> impl Future<Output = Result<(), MmcError>> {
+        op: &mut O,
+    ) -> impl Future<Output = Result<(), MmcError>>
+    where
+        O: TuningOp,
+    {
         async { Ok(()) }
     }
 
@@ -280,9 +265,76 @@ pub trait MmcBus {
     }
 }
 
-/// ------------------------------
+impl<T: MmcBus> MmcBus for &mut T {
+    async fn send_command<'a, C>(&mut self, cmd: C) -> Result<C::Resp<'a>, MmcError>
+    where
+        C: ControlCommand + 'a,
+    {
+        T::send_command(self, cmd).await
+    }
+
+    async fn read_blocks<'a, C>(&mut self, cmd: C) -> Result<C::Resp<'a>, MmcError>
+    where
+        C: BlockReadCommand + 'a,
+    {
+        T::read_blocks(self, cmd).await
+    }
+
+    async fn write_blocks<'a, C>(&mut self, cmd: C) -> Result<C::Resp<'a>, MmcError>
+    where
+        C: BlockWriteCommand + 'a,
+    {
+        T::write_blocks(self, cmd).await
+    }
+
+    async fn read_bytes<'a, C>(&mut self, cmd: C) -> Result<C::Resp<'a>, MmcError>
+    where
+        C: ByteReadCommand + 'a,
+    {
+        T::read_bytes(self, cmd).await
+    }
+
+    async fn write_bytes<'a, C>(&mut self, cmd: C) -> Result<C::Resp<'a>, MmcError>
+    where
+        C: ByteWriteCommand + 'a,
+    {
+        T::write_bytes(self, cmd).await
+    }
+
+    async fn tune_bus<O>(&mut self, width: BusWidth, hz: u32, op: &mut O) -> Result<(), MmcError>
+    where
+        O: TuningOp,
+    {
+        T::tune_bus(self, width, hz, op).await
+    }
+
+    async fn init_idle(&mut self, hz: u32) -> Result<(), MmcError> {
+        T::init_idle(self, hz).await
+    }
+
+    fn set_bus(&mut self, width: BusWidth, hz: u32) -> Result<(), MmcError> {
+        T::set_bus(self, width, hz)
+    }
+
+    fn supports_1v8(&self) -> bool {
+        T::supports_1v8(self)
+    }
+
+    fn supports_bus_width(&self) -> BusWidth {
+        T::supports_bus_width(self)
+    }
+
+    fn supports_frequency(&self) -> u32 {
+        T::supports_frequency(self)
+    }
+
+    fn supports_mmc(&self) -> bool {
+        T::supports_mmc(self)
+    }
+}
+
 /// R1 — Normal status response
-/// ------------------------------
+///
 /// 48-bit, CRC-checked, no busy
 pub struct R1 {
     pub status: u32,
@@ -304,6 +356,14 @@ pub enum CardState {
 impl R1 {
     /// Error bits defined in the SD Physical Spec §4.10.1 (Table 4-41).
     pub const ERR_MASK: u32 = 0xFDF9_8008;
+
+    pub fn to_result(&self) -> Result<(), MmcError> {
+        if self.is_error() {
+            Err(MmcError::Other)
+        } else {
+            Ok(())
+        }
+    }
 
     pub fn is_error(&self) -> bool {
         self.status & Self::ERR_MASK != 0
@@ -343,9 +403,8 @@ impl Response for R1 {
     }
 }
 
-/// ------------------------------
 /// R1b — R1 + busy on DAT0
-/// ------------------------------
+///
 /// 48-bit, CRC-checked, *busy*
 /// Card holds DAT0 low until internal operation completes.
 pub struct R1b {
@@ -362,9 +421,8 @@ impl Response for R1b {
     }
 }
 
-/// ------------------------------
 /// R2 — CID/CSD (136-bit)
-/// ------------------------------
+///
 /// 136-bit, CRC-checked, no busy
 pub struct R2 {
     pub words: [u32; 4],
@@ -382,9 +440,8 @@ impl Response for R2 {
     }
 }
 
-/// ------------------------------
 /// R3 — OCR (Operating Conditions)
-/// ------------------------------
+///
 /// 48-bit, *no CRC*, no busy
 /// Used during initialization before CRC is enabled.
 pub struct R3 {
@@ -401,9 +458,8 @@ impl Response for R3 {
     }
 }
 
-/// ------------------------------
 /// R6 — Published RCA (SD only)
-/// ------------------------------
+///
 /// 48-bit, CRC-checked, no busy
 pub struct R6 {
     pub rca: u16,
@@ -424,9 +480,8 @@ impl Response for R6 {
     }
 }
 
-/// ------------------------------
 /// R7 — Interface condition (CMD8)
-/// ------------------------------
+///
 /// 48-bit, CRC-checked, no busy
 pub struct R7 {
     pub voltage: u8,
@@ -451,9 +506,8 @@ impl Response for R7 {
 /// SDIO RESPONSES
 /// ===========================================================================
 
-/// ------------------------------
 /// R4 — SDIO OCR + capability
-/// ------------------------------
+///
 /// 48-bit, *no CRC*, no busy
 /// Returned by CMD5 (IO_SEND_OP_COND)
 pub struct R4 {
@@ -470,9 +524,8 @@ impl Response for R4 {
     }
 }
 
-/// ------------------------------
 /// R5 — SDIO Direct I/O response
-/// ------------------------------
+///
 /// 48-bit, CRC-checked, no busy
 /// Returned by CMD52 (direct I/O)
 pub struct R5 {
@@ -499,6 +552,14 @@ impl R5 {
         | Self::FLAG_FUNCTION_NUMBER
         | Self::FLAG_OUT_OF_RANGE;
 
+    pub fn to_result(&self) -> Result<(), MmcError> {
+        if self.is_error() {
+            Err(MmcError::Other)
+        } else {
+            Ok(())
+        }
+    }
+
     pub fn is_error(&self) -> bool {
         self.flags & Self::ERROR_FLAGS != 0
     }
@@ -518,19 +579,27 @@ impl Response for R5 {
     }
 }
 
-/// Check whether the card is ready for data
-async fn check_card(bus: &mut impl MmcBus, rca: u16) -> bool {
-    if let Ok(status) = bus.send_command(common::card_status(rca, false)).await
-        && CardStatus::<()>::from(status).ready_for_data()
-    {
-        true
-    } else {
-        false
+/// Bus Tuning Operation
+pub trait TuningOp {
+    /// Execute the operation. If error, abort the operation and return.
+    fn exec<B: MmcBus>(&mut self, bus: &mut B) -> impl Future<Output = Result<bool, MmcError>>;
+}
+
+// Allow passing some commands by reference
+impl<T: Command> Command for &T {
+    const INDEX: u8 = T::INDEX;
+
+    type Resp<'a>
+        = T::Resp<'a>
+    where
+        Self: 'a;
+
+    fn arg(&self) -> u32 {
+        T::arg(&self)
     }
 }
 
-// Allow passing `ControlCommand` by reference
-impl<T: ControlCommand> Command for &T {
+impl<T: Command> Command for &mut T {
     const INDEX: u8 = T::INDEX;
 
     type Resp<'a>
@@ -545,6 +614,22 @@ impl<T: ControlCommand> Command for &T {
 
 impl<T: ControlCommand> ControlCommand for &T {}
 
+impl<T: BlockCommand> BlockCommand for &mut T {
+    fn block_count(&self) -> u32 {
+        T::block_count(self)
+    }
+
+    fn block_size(&self) -> BlockSize {
+        T::block_size(self)
+    }
+}
+
+impl<T: BlockReadCommand> BlockReadCommand for &mut T {
+    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
+        T::buf(self)
+    }
+}
+
 /// Bus Adapter that implements common functionality of all bus users
 struct BusAdapter<B: MmcBus, D: DelayNs> {
     pub bus: B,
@@ -556,10 +641,27 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     /// Send the app command notification if this is an app command
     async fn app_cmd(&mut self, app_cmd: bool) -> Result<(), MmcError> {
         if app_cmd {
-            self.bus.send_command(sd::app_cmd(self.rca)).await?;
+            self.bus
+                .send_command(sd::app_cmd(self.rca))
+                .await?
+                .to_result()?
         }
 
         Ok(())
+    }
+
+    /// Check whether the card is ready for data
+    async fn check_card(&mut self) -> bool {
+        if let Ok(status) = self
+            .bus
+            .send_command(common::card_status(self.rca, false))
+            .await
+            && CardStatus::<()>::from(status).ready_for_data()
+        {
+            true
+        } else {
+            false
+        }
     }
 
     /// Wait for the card to be ready if required
@@ -571,7 +673,7 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
         // Wait up to 750ms + cmd time for ready after R1b response
         // Note: this is a rather simplistic timeout loop. It can be improved later.
         for _ in 0..750 {
-            if check_card(&mut self.bus, self.rca).await {
+            if self.check_card().await {
                 return Ok(());
             }
 
@@ -658,11 +760,6 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
         cmd: C,
         app_cmd: bool,
     ) -> Result<C::Resp<'a>, MmcError> {
-        let block_size = cmd.block_size();
-
-        self.bus
-            .send_command(set_block_length(block_size.len() as u32))
-            .await?;
         self.app_cmd(app_cmd).await?;
         let res = self.bus.read_blocks(cmd).await?;
         self.wait_if_required::<C::Resp<'a>>().await?;
@@ -680,32 +777,12 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
         cmd: C,
         app_cmd: bool,
     ) -> Result<C::Resp<'a>, MmcError> {
-        let block_size = cmd.block_size();
-
-        self.bus
-            .send_command(set_block_length(block_size.len() as u32))
-            .await?;
         self.app_cmd(app_cmd).await?;
         let res = self.bus.write_blocks(cmd).await?;
         self.wait_if_required::<C::Resp<'a>>().await?;
 
         Ok(res)
     }
-}
-
-/// Represents either an SD or EMMC card
-pub trait Addressable: Sized + Clone {
-    /// Associated type
-    type Ext;
-
-    /// Is this a standard or high capacity peripheral?
-    fn get_capacity(&self) -> CardCapacity;
-
-    /// Size in bytes
-    fn size(&self) -> u64;
-
-    /// Whether the device supports `CMD23 (SET_BLOCK_COUNT)`.
-    fn supports_cmd23(&self) -> bool;
 }
 
 /// The signalling scheme used on the SDMMC bus
@@ -721,6 +798,34 @@ pub enum Signalling {
     DDR50,
 }
 
+/// Represents either an SD or EMMC card
+trait Acquirable: Sized + Clone + Default {
+    fn acquire<B: MmcBus, D: DelayNs>(
+        bus: &mut BusAdapter<B, D>,
+        block_size: BlockSize,
+        freq: u32,
+    ) -> impl Future<Output = Result<Self, MmcError>>;
+}
+
+/// Represents either an SD or EMMC card
+#[allow(private_bounds)]
+pub trait Addressable: Acquirable {
+    /// Associated type
+    type Ext;
+
+    /// Is this a standard or high capacity peripheral?
+    fn get_capacity(&self) -> CardCapacity;
+
+    /// Size in bytes
+    fn size(&self) -> u64;
+
+    /// Whether the device supports `CMD23 (SET_BLOCK_COUNT)`.
+    fn supports_cmd23(&self) -> bool;
+
+    /// Whether the device supports `ACMD23`.
+    fn supports_acmd23(&self) -> bool;
+}
+
 /// Represents a block storage device
 pub struct BlockDevice<T: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> {
     info: T,
@@ -731,6 +836,33 @@ pub struct BlockDevice<T: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: 
 impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
     BlockDevice<A, B, D, BLOCK_SIZE>
 {
+    /// Create a new block device
+    pub async fn new(bus: B, delay: D, freq: u32) -> Result<Self, MmcError> {
+        let mut this = Self::new_uninit(bus, delay);
+        this.reacquire(freq).await?;
+
+        Ok(this)
+    }
+
+    /// Create a new uninit block device
+    pub fn new_uninit(bus: B, delay: D) -> Self {
+        Self {
+            info: A::default(),
+            bus: BusAdapter { bus, delay, rca: 0 },
+        }
+    }
+
+    /// Reacquire the device
+    pub async fn reacquire(&mut self, freq: u32) -> Result<(), MmcError> {
+        // Clamp the frequency to the supported bus frequency.
+        let freq = freq.clamp(0, self.bus.bus.supports_frequency());
+
+        self.bus.init_idle().await?;
+        self.info = A::acquire(&mut self.bus, block_size(BLOCK_SIZE), freq).await?;
+
+        Ok(())
+    }
+
     /// Get the card info
     pub fn card(&self) -> A {
         self.info.clone()
@@ -821,9 +953,25 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
             _ => block_idx,
         };
 
+        if self.info.supports_cmd23() {
+            self.bus
+                .send_command(sd::set_block_count(blocks.len() as u32), true)
+                .await?;
+        }
+
+        if self.info.supports_acmd23() {
+            self.bus
+                .send_command(sd::set_block_count(blocks.len() as u32), true)
+                .await?;
+        }
+
         self.bus
             .write_blocks(write_multiple_blocks(addr, blocks), false)
             .await?;
+
+        if !self.info.supports_cmd23() {
+            self.bus.send_command(stop_transmission(), false).await?;
+        }
 
         Ok(())
     }

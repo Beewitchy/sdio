@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use sdio::common::{BlockSize, CSD, OCR, RCA};
 use sdio::emmc::EMMC;
-use sdio::sd::{Card, SD};
+use sdio::sd::{SD, SdCard as Card};
 use sdio::{
     BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand, ByteWriteCommand,
     ControlCommand, MmcBus, MmcError, R3, R6, Response,
@@ -536,14 +536,6 @@ fn test_rca_from_r6_preserves_address_and_status() {
     .into();
     assert_eq!(rca.address(), 0x0007);
     assert_eq!(rca.status(), 0x0500);
-}
-
-#[tokio::test]
-async fn test_card_rca_is_populated() {
-    // acquire() must copy the working RCA into Card so high-speed CMD13 et al.
-    // address the card instead of RCA 0.
-    let dev = make_device().await;
-    assert_eq!(dev.card().rca, 0x1234);
 }
 
 #[test]

@@ -74,12 +74,15 @@ pub trait MmcBus {
 
     /// Tune the bus, if required. Called after the bus is set to the target frequency; needed for uhs.
     #[allow(unused_variables)]
-    fn tune_bus(
+    fn tune_bus<C>(
         &mut self,
         width: BusWidth,
         hz: u32,
-        check_card: impl AsyncFnMut(&mut Self) -> bool,
-    ) -> impl Future<Output = Result<(), MmcError>> {
+        status_command: &C,
+    ) -> impl Future<Output = Result<(), MmcError>>
+    where
+        C: ControlCommand,
+    {
         async { Ok(()) }
     }
 
