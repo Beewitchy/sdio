@@ -654,7 +654,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         function: u8,
         increment: bool,
         addr: u32, // 17-bit
-        buf: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
+        buf: &[Aligned<A4, [u8; BLOCK_SIZE]>],
     ) -> Result<SdioResponse, MmcError> {
         self.bus
             .bus
@@ -674,7 +674,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         function: u8,
         increment: bool,
         addr: u32, // 17-bit
-        buf: &mut Aligned<A4, [u8]>,
+        buf: &Aligned<A4, [u8]>,
     ) -> Result<SdioResponse, MmcError> {
         self.bus
             .bus
