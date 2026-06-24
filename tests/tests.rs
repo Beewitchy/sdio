@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use sdio::common::{BlockSize, CSD, OCR, RCA};
 use sdio::emmc::EMMC;
-use sdio::sd::{Card, SD};
+use sdio::sd::{Card, SD, SDStatus};
 use sdio::{
     BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand, ByteWriteCommand,
     ControlCommand, MmcBus, MmcError, R3, R6, Response,
@@ -17,12 +17,11 @@ use block_device_driver::BlockDevice as _;
 use sdio::BlockDevice;
 
 const INIT_FREQ: u32 = 400_000;
-
 /// ---------------------------------------------------------------------------
 /// Internal SD‑card state
 /// ---------------------------------------------------------------------------
 #[derive(Debug)]
-struct CardState {
+pub struct CardState {
     _powered: bool,
     idle: bool,
     ready: bool,
@@ -37,10 +36,19 @@ struct CardState {
     storage: Vec<u8>,
     busy_until: Option<Instant>,
     last_set_blocklen: Option<u32>,
+
+    // Virtual registers (not backed by storage)
+    scr: [u8; 8],
+    sd_status: [u8; 64],
+    switch_status: [u8; 64],
 }
 
 impl CardState {
     fn new(size_bytes: usize) -> Self {
+        let mut switch_status = [0u8; 64];
+        // Function group 1: high-speed supported (bit 1 in support bits at byte 17)
+        switch_status[17] = 0b0000_0010;
+
         Self {
             _powered: true,
             idle: true,
@@ -56,6 +64,11 @@ impl CardState {
             storage: vec![0xFF; size_bytes],
             busy_until: None,
             last_set_blocklen: None,
+
+            // Minimal but sane defaults
+            scr: [0x02, 0x58, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00],
+            sd_status: [0u8; 64],
+            switch_status,
         }
     }
 
@@ -89,15 +102,13 @@ impl DummyMmcBus {
     }
 
     /// Clone the shared state handle so tests can inspect/seed the card.
-    fn state(&self) -> Arc<Mutex<CardState>> {
+    pub fn state(&self) -> Arc<Mutex<CardState>> {
         self.state.clone()
     }
 
     fn wait_busy_if_needed<R: Response>(state: &mut CardState) -> Result<(), MmcError> {
-        if R::BUSY {
-            if state.is_busy() {
-                return Err(MmcError::Busy);
-            }
+        if R::BUSY && state.is_busy() {
+            return Err(MmcError::Busy);
         }
         Ok(())
     }
@@ -119,7 +130,6 @@ impl MmcBus for DummyMmcBus {
         async move {
             let mut st = state.lock().unwrap();
 
-            // Simulate busy behavior
             DummyMmcBus::wait_busy_if_needed::<C::Resp<'_>>(&mut st)?;
 
             match C::INDEX {
@@ -142,41 +152,21 @@ impl MmcBus for DummyMmcBus {
                 }
                 41 => {
                     // ACMD41 — SD_SEND_OP_COND
-                    //
-                    // Real behavior:
-                    //   • Before ready: bit31 = 0 (busy)
-                    //   • After ready:  bit31 = 1 (power-up complete)
-                    //
-                    // Our dummy card becomes ready immediately.
-
                     st.idle = false;
                     st.ready = true;
-
-                    // Set the "power-up complete" bit (bit 31)
                     let ocr_ready = st.ocr | (1 << 31);
-
                     Ok(DummyMmcBus::make_response([ocr_ready, 0, 0, 0]))
                 }
-
                 2 => {
                     // CMD2: ALL_SEND_CID
                     Ok(DummyMmcBus::make_response(st.cid))
                 }
                 3 => {
-                    // CMD3: SEND_RELATIVE_ADDR — RCA is published in bits [31:16].
+                    // CMD3: SEND_RELATIVE_ADDR
                     Ok(DummyMmcBus::make_response([(st.rca as u32) << 16, 0, 0, 0]))
                 }
                 6 => {
                     // CMD6 — SWITCH_FUNCTION (SD mode)
-                    //
-                    // Argument layout:
-                    // [31] Mode: 0 = query, 1 = switch
-                    // [23:20] Function group 1 selection (high-speed lives here)
-                    //
-                    // Host typically does:
-                    //   CMD6(mode=0) → read 64-byte status
-                    //   CMD6(mode=1, group1=1) → switch to high-speed
-
                     let arg = cmd.arg();
                     let mode = (arg >> 31) & 1;
                     let group1 = (arg >> 0) & 0xF;
@@ -184,16 +174,13 @@ impl MmcBus for DummyMmcBus {
                     if mode == 1 {
                         // SWITCH mode
                         if group1 == 1 {
-                            // High-speed function
                             st.high_speed = true;
+                            // Mark high-speed selected in switch_status (byte 13, bit1)
+                            st.switch_status[13] |= 0b0000_0010;
                         }
-                        // Always succeed for dummy card
                         Ok(DummyMmcBus::make_response([0, 0, 0, 0]))
                     } else {
-                        // QUERY mode
-                        //
-                        // The actual 64-byte data block is returned in read_blocks(),
-                        // not here. We just return R1.
+                        // QUERY mode: data comes from read_blocks(), R1 only here
                         Ok(DummyMmcBus::make_response([0, 0, 0, 0]))
                     }
                 }
@@ -216,18 +203,11 @@ impl MmcBus for DummyMmcBus {
                 }
                 16 => {
                     // CMD16 — SET_BLOCKLEN
-                    //
-                    // Real SD cards in SD mode always accept this command,
-                    // but the block length is fixed to 512 bytes.
-                    //
-                    // We ignore the argument for storage, but record it so tests can
-                    // verify the host sends the block length in bytes (not an enum tag).
                     st.last_set_blocklen = Some(cmd.arg());
                     Ok(DummyMmcBus::make_response([0, 0, 0, 0]))
                 }
                 _ => {
                     println!("unsupported cmd: {}", C::INDEX);
-
                     Err(MmcError::IllegalCommand)
                 }
             }
@@ -246,39 +226,34 @@ impl MmcBus for DummyMmcBus {
             let mut st = state.lock().unwrap();
             DummyMmcBus::wait_busy_if_needed::<C::Resp<'_>>(&mut st)?;
 
-            // Detect CMD6 by index
+            // CMD6 (mode=0) — SWITCH FUNCTION STATUS (64 bytes)
             if C::INDEX == 6 {
                 let buf = cmd.buf();
                 let data = &mut *buf[..];
-
-                // Fill with a realistic SWITCH FUNCTION STATUS structure.
-                // 512 bits = 64 bytes.
-                // For simplicity, we only set the high-speed support bit.
-
-                for b in data.iter_mut() {
-                    *b = 0;
-                }
-
-                // Function group 1: high-speed supported + selected
-                // Byte offsets per SD spec:
-                //   0: max current consumption
-                //   1: ...
-                //   13: function group 1 info
-                //   16: function group 1 busy status
-                //   17: function group 1 support bits
-                //
-                // Mark high-speed supported (bit 1)
-                data[17] = 0b0000_0010;
-
-                // If high-speed already enabled, mark it selected
-                if st.high_speed {
-                    data[13] = 0b0000_0010;
-                }
-
+                data.copy_from_slice(&st.switch_status);
                 st.set_busy(1);
                 return Ok(DummyMmcBus::make_response([0, 0, 0, 0]));
             }
 
+            // ACMD51 — SEND_SCR (8 bytes)
+            if C::INDEX == 51 {
+                let buf = cmd.buf();
+                let data = &mut *buf[..];
+                data[..8].copy_from_slice(&st.scr);
+                st.set_busy(1);
+                return Ok(DummyMmcBus::make_response([0, 0, 0, 0]));
+            }
+
+            // ACMD13 — SD_STATUS (64 bytes)
+            if C::INDEX == 13 {
+                let buf = cmd.buf();
+                let data = &mut *buf[..];
+                data[..64].copy_from_slice(&st.sd_status);
+                st.set_busy(1);
+                return Ok(DummyMmcBus::make_response([0, 0, 0, 0]));
+            }
+
+            // Normal data read from storage
             let block = cmd.arg() as usize;
             let bs = cmd.block_size().len();
             let count = cmd.block_count() as usize;
@@ -293,7 +268,6 @@ impl MmcBus for DummyMmcBus {
             buf.copy_from_slice(&st.storage[start..end]);
 
             st.set_busy(1);
-
             Ok(DummyMmcBus::make_response([0, 0, 0, 0]))
         }
     }
@@ -321,7 +295,6 @@ impl MmcBus for DummyMmcBus {
             st.storage[start..end].copy_from_slice(buf);
 
             st.set_busy(2);
-
             Ok(DummyMmcBus::make_response([0, 0, 0, 0]))
         }
     }
@@ -350,7 +323,6 @@ impl MmcBus for DummyMmcBus {
             buf.copy_from_slice(&st.storage[addr..end]);
 
             st.set_busy(1);
-
             Ok(DummyMmcBus::make_response([0, 0, 0, 0]))
         }
     }
@@ -376,7 +348,6 @@ impl MmcBus for DummyMmcBus {
             st.storage[addr..end].copy_from_slice(buf);
 
             st.set_busy(1);
-
             Ok(DummyMmcBus::make_response([0, 0, 0, 0]))
         }
     }
@@ -395,12 +366,12 @@ impl MmcBus for DummyMmcBus {
 
     fn set_bus(&mut self, width: BusWidth, hz: u32) -> Result<(), MmcError> {
         let state = self.state.clone();
-
         let mut st = state.lock().unwrap();
         st.width = width;
         st.freq = hz;
         if hz > 25_000_000 {
             st.high_speed = true;
+            st.switch_status[13] |= 0b0000_0010;
         }
         Ok(())
     }
@@ -498,6 +469,52 @@ async fn test_read_zeroed_blocks() {
 // }
 
 #[tokio::test]
+async fn test_sd_status_parse() {
+    // The first 64 bytes of your ACMD13 response
+    let status = SDStatus::from([
+        128, 0, 0, 0, 3, 0, 0, 0, 4, 0, 144, 0, 20, 5, 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+    ]);
+
+    // Bus width: (word 15 >> 30) & 3 = (0x80000000 >> 30) & 3 = 0b10 → W4
+    assert!(matches!(status.bus_width(), Some(BusWidth::W4)));
+
+    // Secure mode: bit 29 of word 15 → 0
+    assert_eq!(status.secure_mode(), false);
+
+    // SD Memory Card Type: low 16 bits of word 15 → 0x0000
+    assert_eq!(status.sd_memory_card_type(), 0);
+
+    // Protected area size: word 14 = 0x03000000 → 50331648 bytes
+    assert_eq!(status.protected_area_size(), 0x03000000);
+
+    // Speed class: byte 8 = 4
+    assert_eq!(status.speed_class(), 4);
+
+    // Move performance: byte 9 = 0
+    assert_eq!(status.move_performance(), 0);
+
+    // AU size: nibble in byte 10 = 0x9 → 9
+    assert_eq!(status.allocation_unit_size(), 9);
+
+    // Erase size: bytes 11–12 = 0x00 0x14 → 0x0014 = 20 AU
+    assert_eq!(status.erase_size(), 20);
+
+    // Erase timeout: bits 23:18 of word 12 = 1
+    assert_eq!(status.erase_timeout(), 1);
+
+    // Video speed class: byte 16 = 0
+    assert_eq!(status.video_speed_class(), 0);
+
+    // Application performance class: nibble in byte 22 = 0
+    assert_eq!(status.app_perf_class(), 0);
+
+    // Discard support: bit 25 of word 8 = 0
+    assert_eq!(status.discard_support(), false);
+}
+
+#[tokio::test]
 async fn test_out_of_bounds_read() {
     let mut dev = make_device().await;
 
@@ -587,11 +604,17 @@ async fn test_sd_status_erase_size_combines_bytes() {
     // must be shifted up, not OR-ed onto the low byte.
     let bus = DummyMmcBus::new(CARD_BYTES);
     let state = bus.state();
+
     {
         let mut st = state.lock().unwrap();
-        st.storage[52] = 0x12; // high byte
-        st.storage[51] = 0x34; // low byte
+
+        // According to SD Status layout:
+        //   ERASE_SIZE low byte  = sd_status[11]
+        //   ERASE_SIZE high byte = sd_status[12]
+        st.sd_status[11] = 0x12; // low byte
+        st.sd_status[12] = 0x34; // high byte
     }
+
     let dev = BlockDevice::<Card, _, _, BLOCK_SIZE>::new_sd_card(bus, INIT_FREQ, NoopDelay)
         .await
         .unwrap();

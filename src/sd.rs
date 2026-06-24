@@ -437,6 +437,30 @@ pub enum SDSpecVersion {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SDSecurity {
+    /// No security (rare)
+    None,
+    /// SDSC security version 1.x
+    V1,
+    /// SDHC security version 2.x
+    V2,
+    /// SDXC security version 3.x
+    V3,
+    /// Reserved / unknown
+    Unknown(u8),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SDEraseDataStatus {
+    /// Erased data is all 0x00
+    Zero,
+    /// Erased data is all 0xFF
+    Ones,
+    /// Erased data is something else (vendor-defined)
+    Other,
+}
+
 /// SD CARD Configuration Register (SCR)
 #[derive(Clone, Copy, Default)]
 pub struct SCR(pub Aligned<A4, [u8; 8]>);
@@ -448,8 +472,35 @@ impl SCR {
         Self(Aligned([0u8; 8]))
     }
 
+    /// Create SDStatus from raw 8 bytes
+    #[inline]
+    pub const fn from(bytes: [u8; 8]) -> Self {
+        Self(Aligned(bytes))
+    }
+
     fn inner_word(&self) -> u64 {
-        u64::from_le_bytes(*self.0)
+        u64::from_be_bytes(*self.0)
+    }
+
+    /// SD Security Version
+    pub fn security(&self) -> SDSecurity {
+        let val = ((self.inner_word() >> 56) & 0xF) as u8;
+        match val {
+            0 => SDSecurity::None,
+            1 => SDSecurity::V1,
+            2 => SDSecurity::V2,
+            3 => SDSecurity::V3,
+            other => SDSecurity::Unknown(other),
+        }
+    }
+
+    pub fn data_after_erase(&self) -> SDEraseDataStatus {
+        let val = ((self.inner_word() >> 54) & 0x3) as u8;
+        match val {
+            0 => SDEraseDataStatus::Zero,
+            1 => SDEraseDataStatus::Ones,
+            _ => SDEraseDataStatus::Other,
+        }
     }
 
     /// Physical Layer Specification Version Number
@@ -512,12 +563,26 @@ impl SCR {
         (self.command_support() & 0b1000) != 0
     }
 }
+
 impl core::fmt::Debug for SCR {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("SCR: SD CARD Configuration Register")
             .field("Version", &self.version())
-            .field("1-bit width", &self.bus_width_one())
-            .field("4-bit width", &self.bus_width_four())
+            .field("Security", &self.security())
+            .field("DataAfterErase", &self.data_after_erase())
+            .field(
+                "BusWidths",
+                &format_args!(
+                    "1-bit: {}, 4-bit: {} (mask=0x{:X})",
+                    self.bus_width_one(),
+                    self.bus_width_four(),
+                    self.bus_widths()
+                ),
+            )
+            .field("CMD20", &self.supports_cmd20())
+            .field("ACMD23", &self.supports_acmd23())
+            .field("CMD48", &self.supports_cmd48())
+            .field("CMD49", &self.supports_cmd49())
             .finish()
     }
 }
@@ -759,7 +824,7 @@ impl Default for SDStatus {
 }
 
 impl SDStatus {
-    /// Create a new `SDStatus`
+    /// Create a new empty SDStatus
     #[inline]
     pub const fn new() -> Self {
         Self {
@@ -767,63 +832,91 @@ impl SDStatus {
         }
     }
 
-    fn inner_word(&self, i: usize) -> u32 {
-        u32::from_le_bytes(self.inner[i * 4..i * 4 + 4].try_into().unwrap())
+    /// Create SDStatus from raw 64 bytes
+    #[inline]
+    pub const fn from(bytes: [u8; 64]) -> Self {
+        Self {
+            inner: Aligned(bytes),
+        }
     }
 
-    /// Current data bus width
+    /// Read a 32‑bit big‑endian word from the SD Status structure.
+    ///
+    /// WORD0 = bytes 0..4  
+    /// WORD15 = bytes 60..64
+    #[inline]
+    fn word(&self, index: usize) -> u32 {
+        let start = index * 4;
+        u32::from_be_bytes(self.inner[start..start + 4].try_into().unwrap())
+    }
+
+    /// Current data bus width (W1 or W4)
     pub fn bus_width(&self) -> Option<BusWidth> {
-        match (self.inner_word(15) >> 30) & 3 {
+        match (self.word(0) >> 30) & 0b11 {
             0 => Some(BusWidth::W1),
             2 => Some(BusWidth::W4),
             _ => None,
         }
     }
-    /// Is the card currently in the secured mode
+
+    /// Is the card currently in secured mode
     pub fn secure_mode(&self) -> bool {
-        self.inner_word(15) & 0x2000_0000 != 0
+        (self.word(0) & 0x2000_0000) != 0
     }
+
     /// SD Memory Card type (ROM, OTP, etc)
     pub fn sd_memory_card_type(&self) -> u16 {
-        self.inner_word(15) as u16
+        (self.word(0) & 0xFFFF) as u16
     }
-    /// SDHC / SDXC: Capacity of Protected Area in bytes
+
+    /// SDHC/SDXC: Protected area size in bytes
     pub fn protected_area_size(&self) -> u32 {
-        self.inner_word(14)
+        self.word(1)
     }
-    /// Speed Class
+
+    /// Speed Class (C2, C4, C6, C10)
     pub fn speed_class(&self) -> u8 {
-        (self.inner_word(13) >> 24) as u8
+        (self.word(2) >> 24) as u8
     }
-    /// "Performance Move" indicator in 1 MB/s units
+
+    /// "Performance Move" indicator in MB/s
     pub fn move_performance(&self) -> u8 {
-        (self.inner_word(13) >> 16) as u8
+        (self.word(2) >> 16) as u8
     }
-    /// Allocation Unit (AU) size. Lookup in PLSS v7_10 Table 4-47
+
+    /// Allocation Unit (AU) size (Table 4‑47)
     pub fn allocation_unit_size(&self) -> u8 {
-        (self.inner_word(13) >> 12) as u8 & 0xF
+        ((self.word(2) >> 12) & 0xF) as u8
     }
-    /// Indicates N_Erase, in units of AU
+
+    /// N_Erase (erase size in units of AU)
     pub fn erase_size(&self) -> u16 {
-        ((self.inner_word(13) & 0xFF) as u16) << 8 | ((self.inner_word(12) >> 24) & 0xFF) as u16
+        let low = (self.word(2) & 0xFF) as u16;
+        let high = ((self.word(3) >> 24) & 0xFF) as u16;
+        (low << 8) | high
     }
-    /// Indicates T_Erase / Erase Timeout (s)
+
+    /// T_Erase (erase timeout in seconds)
     pub fn erase_timeout(&self) -> u8 {
-        (self.inner_word(12) >> 18) as u8 & 0x3F
+        ((self.word(3) >> 18) & 0x3F) as u8
     }
-    /// Video speed class
+
+    /// Video Speed Class (V6, V10, V30, etc)
     pub fn video_speed_class(&self) -> u8 {
-        (self.inner_word(11) & 0xFF) as u8
+        (self.word(4) & 0xFF) as u8
     }
-    /// Application Performance Class
+
+    /// Application Performance Class (A1, A2)
     pub fn app_perf_class(&self) -> u8 {
-        (self.inner_word(9) >> 16) as u8 & 0xF
+        ((self.word(6) >> 16) & 0xF) as u8
     }
-    /// Discard Support
+
+    /// Discard/TRIM support
     pub fn discard_support(&self) -> bool {
-        self.inner_word(8) & 0x0200_0000 != 0
+        (self.word(7) & 0x0200_0000) != 0
     }
 }
+
 impl fmt::Debug for SDStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SD Status")
