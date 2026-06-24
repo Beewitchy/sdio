@@ -399,16 +399,25 @@ pub struct SdioCard<B: MmcBus, D: DelayNs> {
 }
 
 impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
-    /// Create a new SD card
-    pub async fn new_sdio(bus: B, freq: u32, delay: D) -> Result<Self, MmcError> {
-        let mut s = Self {
+    /// Create a new SDIO card
+    pub async fn new(bus: B, delay: D, freq: u32) -> Result<Self, MmcError> {
+        let mut this = Self::new_uninit(bus, delay);
+        this.reacquire(freq).await?;
+
+        Ok(this)
+    }
+
+    /// Create a new uninit block device
+    pub fn new_uninit(bus: B, delay: D) -> Self {
+        Self {
             bus: BusAdapter { bus, delay, rca: 0 },
             ocr: OCR::default(),
-        };
+        }
+    }
 
-        s.acquire(freq).await?;
-
-        Ok(s)
+    /// Reacquire the device
+    pub async fn reacquire(&mut self, freq: u32) -> Result<(), MmcError> {
+        self.acquire(freq).await
     }
 
     /// Initializes the card into a known state (or at least tries to).
