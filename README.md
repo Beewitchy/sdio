@@ -7,6 +7,14 @@ A struct within this crate implements `block_device_driver::BlockDevice`, which 
 cards that are attached to peripherals that implement `MMCBus`. Currently known file systems that implement support
 for this include [embedded-fatfs][1] and [exfat-slim][2].
 
+## Definitions
+
+- **sdio**: A transport protocol that allows streaming data to wifi, bluetooth, and other similar devices.
+- **sdio card**: A device that implements the sdio protocol.
+- **sd**: A protocol that allows reading from and writing to a device blocks of data that are usually 512 bytes in size.
+- **sd card**: A removable card that implements a verison of the sd protocol.
+- **emmc card**: A fixed card that implements a version of the sd protocol.
+
 ## An [embassy][3] project
 
 This crate is part of the embassy project, designed to improve cross-platform support for native SD/SDIO
@@ -83,6 +91,11 @@ pub trait MmcBus {
     where
         O: TuningOp,
     {
+        async { Ok(()) }
+    }
+
+    /// Wait for DAT1 to be pulled low.
+    fn wait_for_event(&mut self) -> impl Future<Output = Result<(), MmcError>> {
         async { Ok(()) }
     }
 
