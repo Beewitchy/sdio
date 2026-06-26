@@ -621,3 +621,24 @@ async fn test_sd_status_erase_size_combines_bytes() {
 
     assert_eq!(dev.card().status.erase_size(), 0x1234);
 }
+
+#[test]
+fn test_fbr_base_maps_function_to_its_own_block() {
+    // FBR for function N lives at 0x100 * N (FN1 = 0x100 ... FN7 = 0x700).
+    // The bug `0x100 + N * 0x100` shifted every access up one function, so
+    // FN1's block size was written into FN2's FBR.
+    use sdio::sdio::{
+        FBR_BLKSZ_HI, FBR_BLKSZ_LO, fbr_base, fbr_block_size_high, fbr_block_size_low,
+    };
+
+    assert_eq!(fbr_base(1), 0x100);
+    assert_eq!(fbr_base(2), 0x200);
+    assert_eq!(fbr_base(7), 0x700);
+
+    // Derived helpers must land inside the same function's block.
+    assert_eq!(fbr_block_size_low(1), 0x100 + FBR_BLKSZ_LO);
+    assert_eq!(fbr_block_size_high(1), 0x100 + FBR_BLKSZ_HI);
+
+    // FN1's block-size register must never collide with FN2's base.
+    assert!(fbr_block_size_high(1) < fbr_base(2));
+}

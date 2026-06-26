@@ -356,7 +356,7 @@ pub const FBR_BLKSZ_HI: u32 = 0x11;
 /// FBR base for function N (1..7)
 #[inline]
 pub const fn fbr_base(function: u8) -> u32 {
-    0x100 + (function as u32) * 0x100
+    (function as u32) * 0x100
 }
 
 /// FBR registers (per function)
