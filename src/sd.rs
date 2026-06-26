@@ -547,9 +547,8 @@ impl SCR {
         (self.command_support() & 0b0001) != 0
     }
 
-    /// Returns true if ACMD23 (SET_WR_BLK_ERASE_COUNT) is supported
-    pub fn supports_acmd23(&self) -> bool {
-        // Bit 1 of the Command Support field
+    /// Returns true if CMD23 (SET_BLK_COUNT) is supported
+    pub fn supports_cmd23(&self) -> bool {
         (self.command_support() & 0b10) != 0
     }
 
@@ -580,7 +579,7 @@ impl core::fmt::Debug for SCR {
                 ),
             )
             .field("CMD20", &self.supports_cmd20())
-            .field("ACMD23", &self.supports_acmd23())
+            .field("CMD23", &self.supports_cmd23())
             .field("CMD48", &self.supports_cmd48())
             .field("CMD49", &self.supports_cmd49())
             .finish()
@@ -978,12 +977,11 @@ impl Addressable for Card {
     }
 
     fn supports_cmd23(&self) -> bool {
-        // CMD23 support is disalbed until a reliable detection method is implemented
-        false
+        self.scr.supports_cmd23()
     }
 
     fn supports_acmd23(&self) -> bool {
-        self.scr.supports_acmd23()
+        true // mandatory for SD cards
     }
 }
 

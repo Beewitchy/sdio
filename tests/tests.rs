@@ -709,7 +709,7 @@ fn test_scr_decodes_all_fields() {
     assert!(scr.bus_width_one());
     assert!(scr.bus_width_four());
     assert!(scr.supports_cmd20());
-    assert!(scr.supports_acmd23());
+    assert!(scr.supports_cmd23());
     assert!(scr.supports_cmd48());
     assert!(scr.supports_cmd49());
 }
