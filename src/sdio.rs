@@ -394,6 +394,28 @@ impl From<R5> for SdioResponse {
     }
 }
 
+fn to_blocks<const BLOCK_SIZE: usize>(
+    bytes: &Aligned<A4, [u8]>,
+) -> &[Aligned<A4, [u8; BLOCK_SIZE]>] {
+    assert!(bytes.len().is_multiple_of(BLOCK_SIZE));
+
+    let ptr = bytes.as_ptr() as *const Aligned<A4, [u8; BLOCK_SIZE]>;
+    let len = bytes.len() / BLOCK_SIZE;
+
+    unsafe { core::slice::from_raw_parts(ptr, len) }
+}
+
+fn to_blocks_mut<const BLOCK_SIZE: usize>(
+    bytes: &mut Aligned<A4, [u8]>,
+) -> &mut [Aligned<A4, [u8; BLOCK_SIZE]>] {
+    assert!(bytes.len().is_multiple_of(BLOCK_SIZE));
+
+    let ptr = bytes.as_mut_ptr() as *mut Aligned<A4, [u8; BLOCK_SIZE]>;
+    let len = bytes.len() / BLOCK_SIZE;
+
+    unsafe { core::slice::from_raw_parts_mut(ptr, len) }
+}
+
 /// SDIO Interface
 pub struct SdioCard<B: MmcBus, D: DelayNs> {
     bus: BusAdapter<B, D>,
@@ -509,11 +531,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
     ///
     /// `func_mask` is an 8-bit mask where bit N enables function N (bits 1–7).
     /// Blocks until IO_READY confirms the functions are up.
-    pub async fn enable_functions(
-        &mut self,
-        func_mask: u8,
-        delay: &mut impl DelayNs,
-    ) -> Result<(), MmcError> {
+    pub async fn enable_functions(&mut self, func_mask: u8) -> Result<(), MmcError> {
         if func_mask & 0xFE == 0 {
             return Ok(());
         }
@@ -527,7 +545,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
             if ready & func_mask == func_mask {
                 return Ok(());
             }
-            delay.delay_ms(2).await;
+            self.bus.delay.delay_ms(2).await;
         }
     }
 
@@ -639,7 +657,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         increment: bool,
         addr: u32, // 17-bit
         buf: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
-    ) -> Result<SdioResponse, MmcError> {
+    ) -> Result<(), MmcError> {
         self.bus
             .bus
             .read_blocks(Cmd53BlockRead {
@@ -648,8 +666,8 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
                 addr,
                 buf,
             })
-            .await
-            .map(|r| r.into())
+            .await?
+            .to_result()
     }
 
     /// Read in multibyte mode using cmd53
@@ -659,7 +677,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         increment: bool,
         addr: u32, // 17-bit
         buf: &mut Aligned<A4, [u8]>,
-    ) -> Result<SdioResponse, MmcError> {
+    ) -> Result<(), MmcError> {
         self.bus
             .bus
             .read_bytes(Cmd53ByteRead {
@@ -668,9 +686,39 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
                 addr,
                 buf,
             })
-            .await
-            .map(|r| r.into())
+            .await?
+            .to_result()
     }
+
+    /// Read first in block mode and then in multibyte mode using cmd53. Always increments.
+    pub async fn cmd53_read<const BLOCK_SIZE: usize>(
+        &mut self,
+        func: u8,
+        mut addr: u32,
+        buf: &mut Aligned<A4, [u8]>,
+    ) -> Result<(), MmcError> {
+        // Use buf.len() (Deref to [u8]) not size_of_val, which rounds up to 4 bytes.
+        let byte_part = buf.len() % BLOCK_SIZE;
+        let block_part = buf.len() - byte_part;
+
+        if block_part > 0 {
+            let buf = &mut buf[..block_part];
+
+            self.cmd53_read_blocks(func, true, addr, to_blocks_mut::<BLOCK_SIZE>(buf))
+                .await?;
+
+            addr += block_part as u32;
+        }
+
+        if byte_part > 0 {
+            let buf = &mut buf[block_part..];
+
+            self.cmd53_read_bytes(func, true, addr, buf).await?;
+        }
+
+        Ok(())
+    }
+
     /// Write in block mode using cmd53
     pub async fn cmd53_write_blocks<const BLOCK_SIZE: usize>(
         &mut self,
@@ -678,7 +726,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         increment: bool,
         addr: u32, // 17-bit
         buf: &[Aligned<A4, [u8; BLOCK_SIZE]>],
-    ) -> Result<SdioResponse, MmcError> {
+    ) -> Result<(), MmcError> {
         self.bus
             .bus
             .write_blocks(Cmd53BlockWrite {
@@ -687,8 +735,8 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
                 addr,
                 buf,
             })
-            .await
-            .map(|r| r.into())
+            .await?
+            .to_result()
     }
 
     /// Write in multibyte mode using cmd53
@@ -698,7 +746,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         increment: bool,
         addr: u32, // 17-bit
         buf: &Aligned<A4, [u8]>,
-    ) -> Result<SdioResponse, MmcError> {
+    ) -> Result<(), MmcError> {
         self.bus
             .bus
             .write_bytes(Cmd53ByteWrite {
@@ -707,7 +755,36 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
                 addr,
                 buf,
             })
-            .await
-            .map(|r| r.into())
+            .await?
+            .to_result()
+    }
+
+    /// Write first in block mode and then in multibyte mode using cmd53. Always increments.
+    pub async fn cmd53_write<const BLOCK_SIZE: usize>(
+        &mut self,
+        func: u8,
+        mut addr: u32,
+        buf: &Aligned<A4, [u8]>,
+    ) -> Result<(), MmcError> {
+        // Use buf.len() (Deref to [u8]) not size_of_val, which rounds up to 4 bytes.
+        let byte_part = buf.len() % BLOCK_SIZE;
+        let block_part = buf.len() - byte_part;
+
+        if block_part > 0 {
+            let buf = &buf[..block_part];
+
+            self.cmd53_write_blocks(func, true, addr, to_blocks::<BLOCK_SIZE>(buf))
+                .await?;
+
+            addr += block_part as u32;
+        }
+
+        if byte_part > 0 {
+            let buf = &buf[block_part..];
+
+            self.cmd53_write_bytes(func, true, addr, buf).await?;
+        }
+
+        Ok(())
     }
 }
