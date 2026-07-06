@@ -435,6 +435,15 @@ pub struct R1b {
     pub status: u32,
 }
 
+impl R1b {
+    /// Convert this to a normal R1 response
+    pub const fn to_response(&self) -> R1 {
+        R1 {
+            status: self.status,
+        }
+    }
+}
+
 impl Response for R1b {
     const CRC: bool = true;
     const LEN: ResponseLen = ResponseLen::R48;
@@ -921,7 +930,8 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
 
         self.bus
             .read_blocks(read_single_block(addr, block), false)
-            .await?;
+            .await?
+            .to_result()?;
 
         Ok(())
     }
@@ -944,7 +954,8 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
 
         self.bus
             .read_blocks(read_multiple_blocks(addr, blocks), false)
-            .await?;
+            .await?
+            .to_result()?;
 
         Ok(())
     }
@@ -967,7 +978,9 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
 
         self.bus
             .write_blocks(write_single_block(addr, block), false)
-            .await?;
+            .await?
+            .to_response()
+            .to_result()?;
 
         Ok(())
     }
@@ -991,20 +1004,26 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
         if self.info.supports_acmd23() {
             self.bus
                 .send_command(sd::set_wr_blk_erase_count(blocks.len() as u32), true)
-                .await?;
+                .await?
+                .to_result()?;
         }
 
-        if self.info.supports_cmd23() {
+        let supports_cmd23 = self.info.supports_cmd23();
+
+        if supports_cmd23 {
             self.bus
                 .send_command(sd::set_block_count(blocks.len() as u32), false)
-                .await?;
+                .await?
+                .to_result()?;
         }
 
         self.bus
             .write_blocks(write_multiple_blocks(addr, blocks), false)
-            .await?;
+            .await?
+            .to_response()
+            .to_result()?;
 
-        if !self.info.supports_cmd23() {
+        if !supports_cmd23 {
             self.bus.send_command(stop_transmission(), false).await?;
         }
 
