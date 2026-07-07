@@ -200,7 +200,7 @@ pub trait MmcBus {
 
     /// Read N blocks of fixed size (CMD17, CMD18, CMD53 block mode).
     ///
-    /// If called with auto_stop set to true, CMD12 must be issued after completing this command.z
+    /// If called with auto_stop set to true, CMD12 must be issued after completing this command.
     fn read_blocks<'a, C>(
         &mut self,
         cmd: C,
