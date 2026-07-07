@@ -1074,12 +1074,12 @@ impl Acquirable for Card {
         bus.read_blocks(sd::send_scr(&mut this.scr), true).await?;
 
         // ACMD6 — set bus width BEFORE high-speed signalling switch
-        let (bus_width, acmd_arg) = match bus_width {
-            BusWidth::W4 if this.scr.bus_width_four() => (BusWidth::W4, 2),
-            _ => (BusWidth::W1, 0),
+        let (bus_width, bw4bit) = match bus_width {
+            BusWidth::W4 if this.scr.bus_width_four() => (BusWidth::W4, true),
+            _ => (BusWidth::W1, false),
         };
 
-        bus.send_command(set_bus_width(acmd_arg == 2), true).await?;
+        bus.send_command(set_bus_width(bw4bit), true).await?;
 
         // Up to 25Mhz
         bus.bus.set_bus(bus_width, freq.min(25_000_000))?;

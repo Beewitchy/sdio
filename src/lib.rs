@@ -886,6 +886,9 @@ pub trait Addressable: Acquirable {
     fn supports_acmd23(&self) -> bool;
 }
 
+/// Represents a block storage device with a 512 byte block size
+pub type DefaultBlockDevice<T, B, D> = BlockDevice<T, B, D, 512>;
+
 /// Represents a block storage device
 pub struct BlockDevice<T: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> {
     info: T,
@@ -929,6 +932,14 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
         self.info.clone()
     }
 
+    fn get_addr(&self, block_idx: u32) -> u32 {
+        // SDSC cards are byte addressed hence the blockaddress is in multiples of 512 bytes
+        match self.info.get_capacity() {
+            CardCapacity::StandardCapacity => block_idx * BLOCK_SIZE as u32,
+            _ => block_idx,
+        }
+    }
+
     /// Read a data block.
     #[inline]
     async fn read_block(
@@ -936,17 +947,8 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
         block_idx: u32,
         block: &mut Aligned<A4, [u8; BLOCK_SIZE]>,
     ) -> Result<(), MmcError> {
-        let card_capacity = self.info.get_capacity();
-
-        // Always read 1 block of 512 bytes
-        // SDSC cards are byte addressed hence the blockaddress is in multiples of 512 bytes
-        let addr = match card_capacity {
-            CardCapacity::StandardCapacity => block_idx * BLOCK_SIZE as u32,
-            _ => block_idx,
-        };
-
         self.bus
-            .read_blocks(read_single_block(addr, block), false)
+            .read_blocks(read_single_block(self.get_addr(block_idx), block), false)
             .await?
             .to_result()?;
 
@@ -960,17 +962,11 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
         block_idx: u32,
         blocks: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
     ) -> Result<(), MmcError> {
-        let card_capacity = self.info.get_capacity();
-
-        // Always read 1 block of 512 bytes
-        // SDSC cards are byte addressed hence the blockaddress is in multiples of 512 bytes
-        let addr = match card_capacity {
-            CardCapacity::StandardCapacity => block_idx * BLOCK_SIZE as u32,
-            _ => block_idx,
-        };
-
         self.bus
-            .read_blocks(read_multiple_blocks(addr, blocks), false)
+            .read_blocks(
+                read_multiple_blocks(self.get_addr(block_idx), blocks),
+                false,
+            )
             .await?
             .to_result()?;
 
@@ -984,17 +980,12 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
         block_idx: u32,
         block: &Aligned<A4, [u8; BLOCK_SIZE]>,
     ) -> Result<(), MmcError> {
-        let card_capacity = self.info.get_capacity();
-
-        // Always read 1 block of 512 bytes
-        // SDSC cards are byte addressed hence the blockaddress is in multiples of 512 bytes
-        let addr = match card_capacity {
-            CardCapacity::StandardCapacity => block_idx * BLOCK_SIZE as u32,
-            _ => block_idx,
-        };
-
         self.bus
-            .write_blocks(write_single_block(addr, block), false, false)
+            .write_blocks(
+                write_single_block(self.get_addr(block_idx), block),
+                false,
+                false,
+            )
             .await?
             .to_response()
             .to_result()?;
@@ -1009,15 +1000,6 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
         block_idx: u32,
         blocks: &[Aligned<A4, [u8; BLOCK_SIZE]>],
     ) -> Result<(), MmcError> {
-        let card_capacity = self.info.get_capacity();
-
-        // Always read 1 block of 512 bytes
-        // SDSC cards are byte addressed hence the blockaddress is in multiples of 512 bytes
-        let addr = match card_capacity {
-            CardCapacity::StandardCapacity => block_idx * BLOCK_SIZE as u32,
-            _ => block_idx,
-        };
-
         if self.info.supports_acmd23() {
             self.bus
                 .send_command(sd::set_wr_blk_erase_count(blocks.len() as u32), true)
@@ -1037,7 +1019,7 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
 
         self.bus
             .write_blocks(
-                write_multiple_blocks(addr, blocks),
+                write_multiple_blocks(self.get_addr(block_idx), blocks),
                 !supports_cmd23 && supports_auto_stop,
                 false,
             )
