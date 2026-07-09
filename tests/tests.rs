@@ -6,7 +6,7 @@ use sdio::common::{BlockSize, CSD, OCR, RCA};
 use sdio::emmc::EMMC;
 use sdio::sd::{Card, SD, SDStatus};
 use sdio::{
-    BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand, ByteWriteCommand,
+    BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand, ByteWriteCommand, CardError,
     ControlCommand, MmcBus, MmcError, R3, R6, Response,
 };
 
@@ -208,7 +208,7 @@ impl MmcBus for DummyMmcBus {
                 }
                 _ => {
                     println!("unsupported cmd: {}", C::INDEX);
-                    Err(MmcError::IllegalCommand)
+                    Err(MmcError::Card(CardError::IllegalCommand))
                 }
             }
         }
