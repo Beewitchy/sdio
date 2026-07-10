@@ -582,7 +582,7 @@ impl Acquirable for Emmc {
 
         bus.bus.set_bus(bus_width, freq)?;
 
-        bus.read_blocks(send_ext_csd(&mut this.ext_csd), false)
+        bus.read_blocks(send_ext_csd(&mut this.ext_csd), false, false)
             .await?;
 
         Ok((this, freq))

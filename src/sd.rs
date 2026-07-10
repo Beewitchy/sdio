@@ -142,16 +142,18 @@ impl<'a> BlockReadCommand for Cmd19<'a> {
 
 impl<'a> TuningOp for Cmd19<'a> {
     async fn exec<B: MmcBus>(&mut self, bus: &mut B) -> Result<bool, MmcError> {
-        // The official 64‑byte SD tuning pattern
+        // The official 64-byte SD 4-bit tuning pattern (SD Physical Layer spec
+        // §4.2.4.5, == Linux `tuning_blk_pattern_4bit`). CMD19 tuning runs in the
+        // active bus width, which is 4-bit here.
         const TUNING_PATTERN: [u8; 64] = [
-            0xFF, 0x00, 0xAA, 0x55, 0xFF, 0x00, 0xAA, 0x55, 0xFF, 0x00, 0xAA, 0x55, 0xFF, 0x00,
-            0xAA, 0x55, 0xFF, 0x00, 0xAA, 0x55, 0xFF, 0x00, 0xAA, 0x55, 0xFF, 0x00, 0xAA, 0x55,
-            0xFF, 0x00, 0xAA, 0x55, 0x00, 0xFF, 0x55, 0xAA, 0x00, 0xFF, 0x55, 0xAA, 0x00, 0xFF,
-            0x55, 0xAA, 0x00, 0xFF, 0x55, 0xAA, 0x00, 0xFF, 0x55, 0xAA, 0x00, 0xFF, 0x55, 0xAA,
-            0x00, 0xFF, 0x55, 0xAA, 0x00, 0xFF, 0x55, 0xAA,
+            0xFF, 0x0F, 0xFF, 0x00, 0xFF, 0xCC, 0xC3, 0xCC, 0xC3, 0x3C, 0xCC, 0xFF, 0xFE, 0xFF,
+            0xFE, 0xEF, 0xFF, 0xDF, 0xFF, 0xDD, 0xFF, 0xFB, 0xFF, 0xFB, 0xBF, 0xFF, 0x7F, 0xFF,
+            0x77, 0xF7, 0xBD, 0xEF, 0xFF, 0xF0, 0xFF, 0xF0, 0x0F, 0xFC, 0xCC, 0x3C, 0xCC, 0x33,
+            0xCC, 0xCF, 0xFF, 0xEF, 0xFF, 0xEE, 0xFF, 0xFD, 0xFF, 0xFD, 0xDF, 0xFF, 0xBF, 0xFF,
+            0xBB, 0xFF, 0xF7, 0xFF, 0xF7, 0x7F, 0x7B, 0xDE,
         ];
 
-        if bus.read_blocks(&mut *self).await.is_ok() && self.buf[..] == TUNING_PATTERN {
+        if bus.read_blocks(&mut *self, false).await.is_ok() && self.buf[..] == TUNING_PATTERN {
             Ok(true)
         } else {
             Ok(false)
@@ -1071,7 +1073,8 @@ impl Acquirable for Card {
         bus.select_card(Some(bus.rca)).await?;
 
         // ACMD51 — read SCR (must be ≤25 MHz, 1-bit)
-        bus.read_blocks(sd::send_scr(&mut this.scr), true).await?;
+        bus.read_blocks(sd::send_scr(&mut this.scr), false, true)
+            .await?;
 
         // ACMD6 — set bus width BEFORE high-speed signalling switch
         let (bus_width, bw4bit) = match bus_width {
@@ -1110,7 +1113,7 @@ impl Acquirable for Card {
         }
 
         // ACMD13 — SD Status (after signalling switch)
-        bus.read_blocks(sd::sd_status(&mut this.status), true)
+        bus.read_blocks(sd::sd_status(&mut this.status), false, true)
             .await?;
 
         // CMD16 — set block length
@@ -1148,7 +1151,8 @@ impl Card {
                 Signalling::SDR12 => 0xFF_FF00,
             };
 
-        bus.read_blocks(cmd6(set_function, buf), false).await?;
+        bus.read_blocks(cmd6(set_function, buf), false, false)
+            .await?;
 
         // Host is allowed to use the new functions at least 8
         // clocks after the end of the switch command
