@@ -52,7 +52,13 @@ pub trait MmcBus {
         C: ControlCommand + 'a;
 
     /// Read N blocks of fixed size (CMD17, CMD18, CMD53 block mode).
-    fn read_blocks<'a, C>(&mut self, cmd: C) -> impl Future<Output = Result<C::Resp<'a>, MmcError>>
+    ///
+    /// If called with auto_stop set to true, CMD12 must be issued after completing this command.
+    fn read_blocks<'a, C>(
+        &mut self,
+        cmd: C,
+        auto_stop: bool,
+    ) -> impl Future<Output = Result<C::Resp<'a>, MmcError>>
     where
         C: BlockReadCommand + 'a;
 
