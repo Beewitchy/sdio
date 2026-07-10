@@ -1128,17 +1128,25 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
         blocks: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
     ) -> Result<(), MmcError> {
         let supports_auto_stop = self.bus.bus.supports_auto_stop();
+        let supports_cmd23 = self.info.supports_cmd23();
+
+        if supports_cmd23 {
+            self.bus
+                .send_command(sd::set_block_count(blocks.len() as u32), false)
+                .await?
+                .to_result()?;
+        }
 
         self.bus
             .read_blocks(
                 read_multiple_blocks(self.get_addr(block_idx), blocks),
-                supports_auto_stop,
+                !supports_cmd23 && supports_auto_stop,
                 false,
             )
             .await?
             .to_result()?;
 
-        if !supports_auto_stop {
+        if !supports_cmd23 && !supports_auto_stop {
             self.bus.send_command(stop_transmission(), false).await?;
         }
 
