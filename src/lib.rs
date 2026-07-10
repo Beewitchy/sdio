@@ -1042,6 +1042,7 @@ pub type DefaultBlockDevice<T, B, D> = BlockDevice<T, B, D, 512>;
 pub struct BlockDevice<T: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> {
     info: T,
     freq: u32,
+    error: bool,
     bus: BusAdapter<B, D>,
 }
 
@@ -1062,6 +1063,7 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
         Self {
             info: A::default(),
             freq: 0,
+            error: false,
             bus: BusAdapter { bus, delay, rca: 0 },
         }
     }
@@ -1219,12 +1221,18 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
     ) -> Result<(), Self::Error> {
         assert_eq!(BLOCK_SIZE % 4, 0);
 
-        // TODO: I think block_address needs to be adjusted by the partition start offset
+        if self.error {
+            self.bus.send_command(stop_transmission(), false).await?;
+        }
+
+        self.error = true;
         if blocks.len() == 1 {
             self.read_block(block_address, &mut blocks[0]).await?;
         } else {
             self.read_blocks(block_address, blocks).await?;
         }
+        self.error = false;
+
         Ok(())
     }
 
@@ -1236,12 +1244,18 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
     ) -> Result<(), Self::Error> {
         assert_eq!(BLOCK_SIZE % 4, 0);
 
-        // TODO: I think block_address needs to be adjusted by the partition start offset
+        if self.error {
+            self.bus.send_command(stop_transmission(), false).await?;
+        }
+
+        self.error = true;
         if blocks.len() == 1 {
             self.write_block(block_address, &blocks[0]).await?;
         } else {
             self.write_blocks(block_address, blocks).await?;
         }
+        self.error = false;
+
         Ok(())
     }
 
