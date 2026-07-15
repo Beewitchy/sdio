@@ -17,6 +17,7 @@ use crate::sd::{
     stop_transmission, write_multiple_blocks, write_single_block,
 };
 
+pub mod block_device;
 pub mod common;
 pub mod emmc;
 pub mod sd;
@@ -168,7 +169,7 @@ pub trait BlockReadCommand: BlockCommand {
 /// BlockWriteCommand: block-mode write (CMD24, CMD25)
 pub trait BlockWriteCommand: BlockCommand {
     /// Buffer for block-mode writes. The length of this buffer must be `block_size()` * `block_count()`
-    fn buf(&self) -> &Aligned<A4, [u8]>;
+    fn buf(&mut self) -> &mut Aligned<A4, [u8]>;
 }
 
 /// ByteReadCommand: byte-mode read (CMD53 byte read)
@@ -180,7 +181,7 @@ pub trait ByteReadCommand: ByteCommand {
 /// ByteWriteCommand: byte-mode write (CMD53 byte write)
 pub trait ByteWriteCommand: ByteCommand {
     /// Buffer for byte-mode writes. The length of this buffer must be `byte_count()`.
-    fn buf(&self) -> &Aligned<A4, [u8]>;
+    fn buf(&mut self) -> &mut Aligned<A4, [u8]>;
 }
 
 /// ---------------------------------------------------------------------------
@@ -1158,7 +1159,7 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
     async fn write_block(
         &mut self,
         block_idx: u32,
-        block: &Aligned<A4, [u8; BLOCK_SIZE]>,
+        block: &mut Aligned<A4, [u8; BLOCK_SIZE]>,
     ) -> Result<(), MmcError> {
         self.bus
             .write_blocks(
@@ -1178,7 +1179,7 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
     async fn write_blocks(
         &mut self,
         block_idx: u32,
-        blocks: &[Aligned<A4, [u8; BLOCK_SIZE]>],
+        blocks: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
     ) -> Result<(), MmcError> {
         if self.info.supports_acmd23() {
             self.bus
@@ -1216,7 +1217,7 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
 }
 
 impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
-    block_device_driver::BlockDevice<BLOCK_SIZE> for BlockDevice<A, B, D, BLOCK_SIZE>
+    block_device::BlockDevice<BLOCK_SIZE> for BlockDevice<A, B, D, BLOCK_SIZE>
 {
     type Align = A4;
     type Error = MmcError;
@@ -1248,7 +1249,7 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
     async fn write(
         &mut self,
         block_address: u32,
-        blocks: &[aligned::Aligned<Self::Align, [u8; BLOCK_SIZE]>],
+        blocks: &mut [aligned::Aligned<Self::Align, [u8; BLOCK_SIZE]>],
     ) -> Result<(), Self::Error> {
         assert_eq!(BLOCK_SIZE % 4, 0);
 
@@ -1258,7 +1259,7 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
 
         self.error = true;
         if blocks.len() == 1 {
-            self.write_block(block_address, &blocks[0]).await?;
+            self.write_block(block_address, &mut blocks[0]).await?;
         } else {
             self.write_blocks(block_address, blocks).await?;
         }

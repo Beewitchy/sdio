@@ -8,12 +8,12 @@ use sdio::sd::{Card, SD, SDStatus};
 use sdio::{
     BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand, ByteWriteCommand, CardError,
     ControlCommand, MmcBus, MmcError, R3, R6, Response,
+    block_device::BlockDevice as _,
 };
 
 use aligned::Aligned;
 use embedded_hal_async::delay::DelayNs;
 
-use block_device_driver::BlockDevice as _;
 use sdio::BlockDevice;
 
 const INIT_FREQ: u32 = 400_000;
@@ -310,7 +310,7 @@ impl MmcBus for DummyMmcBus {
 
     fn write_blocks<'a, C>(
         &mut self,
-        cmd: C,
+        mut cmd: C,
         auto_stop: bool,
     ) -> impl Future<Output = Result<C::Resp<'a>, MmcError>>
     where
@@ -371,7 +371,7 @@ impl MmcBus for DummyMmcBus {
         }
     }
 
-    fn write_bytes<'a, C>(&mut self, cmd: C) -> impl Future<Output = Result<C::Resp<'a>, MmcError>>
+    fn write_bytes<'a, C>(&mut self, mut cmd: C) -> impl Future<Output = Result<C::Resp<'a>, MmcError>>
     where
         C: ByteWriteCommand + 'a,
     {

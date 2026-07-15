@@ -239,7 +239,7 @@ where
 
     async fn write_blocks<'a, C>(
         &mut self,
-        cmd: C,
+        mut cmd: C,
         auto_stop: bool,
     ) -> Result<C::Resp<'a>, MmcError>
     where
@@ -252,7 +252,7 @@ where
         self.send_cmd_header(&cmd).await?;
         let block_size = cmd.block_size().len();
         let total = block_size * cmd.block_count() as usize;
-        let slice = &cmd.buf()[..total];
+        let slice = &mut cmd.buf()[..total];
 
         for chunk in slice.chunks(block_size) {
             self.write_block(chunk).await?;
@@ -278,13 +278,13 @@ where
         Ok(resp)
     }
 
-    async fn write_bytes<'a, C>(&mut self, cmd: C) -> Result<C::Resp<'a>, MmcError>
+    async fn write_bytes<'a, C>(&mut self, mut cmd: C) -> Result<C::Resp<'a>, MmcError>
     where
         C: ByteWriteCommand + 'a,
     {
         self.send_cmd_header(&cmd).await?;
         let len = cmd.byte_count();
-        let slice = &cmd.buf()[..len];
+        let slice = &mut cmd.buf()[..len];
 
         self.write_block(slice).await?;
 

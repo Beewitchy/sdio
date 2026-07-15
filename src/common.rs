@@ -260,7 +260,7 @@ pub fn read_multiple_blocks<const BLOCK_SIZE: usize>(
 /// CMD24 — WRITE_BLOCK
 pub struct Cmd24<'a, const BLOCK_SIZE: usize> {
     pub addr: u32,
-    pub buf: &'a Aligned<A4, [u8; BLOCK_SIZE]>,
+    pub buf: &'a mut Aligned<A4, [u8; BLOCK_SIZE]>,
 }
 impl<'a, const BLOCK_SIZE: usize> Command for Cmd24<'a, BLOCK_SIZE> {
     const INDEX: u8 = 24;
@@ -281,7 +281,7 @@ impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd24<'a, BLOCK_SIZE> {
     }
 }
 impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd24<'a, BLOCK_SIZE> {
-    fn buf(&self) -> &Aligned<A4, [u8]> {
+    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
         self.buf
     }
 }
@@ -289,7 +289,7 @@ impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd24<'a, BLOCK_SIZE> {
 /// CMD24: Write block
 pub fn write_single_block<const BLOCK_SIZE: usize>(
     addr: u32,
-    buf: &Aligned<A4, [u8; BLOCK_SIZE]>,
+    buf: &mut Aligned<A4, [u8; BLOCK_SIZE]>,
 ) -> Cmd24<'_, BLOCK_SIZE> {
     Cmd24 { addr, buf }
 }
@@ -297,7 +297,7 @@ pub fn write_single_block<const BLOCK_SIZE: usize>(
 /// CMD25 — WRITE_MULTIPLE_BLOCK
 pub struct Cmd25<'a, const BLOCK_SIZE: usize> {
     pub addr: u32,
-    pub buf: &'a [Aligned<A4, [u8; BLOCK_SIZE]>],
+    pub buf: &'a mut [Aligned<A4, [u8; BLOCK_SIZE]>],
 }
 impl<'a, const BLOCK_SIZE: usize> Command for Cmd25<'a, BLOCK_SIZE> {
     const INDEX: u8 = 25;
@@ -318,10 +318,10 @@ impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd25<'a, BLOCK_SIZE> {
     }
 }
 impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd25<'a, BLOCK_SIZE> {
-    fn buf(&self) -> &Aligned<A4, [u8]> {
+    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
         unsafe {
-            mem::transmute(slice::from_raw_parts(
-                self.buf.as_ptr() as *const _,
+            mem::transmute(slice::from_raw_parts_mut(
+                self.buf.as_mut_ptr() as *mut _,
                 size_of_val(self.buf),
             ))
         }
@@ -331,7 +331,7 @@ impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd25<'a, BLOCK_SIZE> {
 /// CMD25: Write multiple blocks
 pub fn write_multiple_blocks<const BLOCK_SIZE: usize>(
     addr: u32,
-    buf: &[Aligned<A4, [u8; BLOCK_SIZE]>],
+    buf: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
 ) -> Cmd25<'_, BLOCK_SIZE> {
     Cmd25 { addr, buf }
 }

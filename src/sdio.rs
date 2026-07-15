@@ -5,12 +5,12 @@
 use core::{fmt, mem, slice};
 
 use aligned::{A4, Aligned};
-use block_device_driver::{slice_to_blocks, slice_to_blocks_mut};
 use embedded_hal_async::delay::DelayNs;
 
 use crate::{
     BlockCommand, BlockReadCommand, BlockWriteCommand, BusAdapter, BusWidth, ByteCommand,
     ByteReadCommand, ByteWriteCommand, Command, ControlCommand, MmcBus, MmcError, R4, R5,
+    block_device::slice_to_blocks_mut,
     sd::{self, BlockSize, OCR, RCA, block_size},
 };
 
@@ -110,7 +110,7 @@ pub struct Cmd53ByteWrite<'a> {
     pub function: u8,
     pub increment: bool,
     pub addr: u32, // 17-bit
-    pub buf: &'a Aligned<A4, [u8]>,
+    pub buf: &'a mut Aligned<A4, [u8]>,
 }
 
 impl<'a> Command for Cmd53ByteWrite<'a> {
@@ -138,7 +138,7 @@ impl<'a> ByteCommand for Cmd53ByteWrite<'a> {
 }
 
 impl<'a> ByteWriteCommand for Cmd53ByteWrite<'a> {
-    fn buf(&self) -> &Aligned<A4, [u8]> {
+    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
         self.buf
     }
 }
@@ -195,7 +195,7 @@ pub struct Cmd53BlockWrite<'a, const BLOCK_SIZE: usize> {
     pub function: u8,
     pub increment: bool,
     pub addr: u32, // 17-bit
-    pub buf: &'a [Aligned<A4, [u8; BLOCK_SIZE]>],
+    pub buf: &'a mut [Aligned<A4, [u8; BLOCK_SIZE]>],
 }
 
 impl<'a, const BLOCK_SIZE: usize> Command for Cmd53BlockWrite<'a, BLOCK_SIZE> {
@@ -227,10 +227,10 @@ impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd53BlockWrite<'a, BLOCK_SIZ
 }
 
 impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd53BlockWrite<'a, BLOCK_SIZE> {
-    fn buf(&self) -> &Aligned<A4, [u8]> {
+    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
         unsafe {
-            mem::transmute(slice::from_raw_parts(
-                self.buf.as_ptr() as *const _,
+            mem::transmute(slice::from_raw_parts_mut(
+                self.buf.as_mut_ptr() as *mut _,
                 size_of_val(self.buf),
             ))
         }
@@ -706,7 +706,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         function: u8,
         increment: bool,
         addr: u32, // 17-bit
-        buf: &[Aligned<A4, [u8; BLOCK_SIZE]>],
+        buf: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
     ) -> Result<(), MmcError> {
         self.bus
             .bus
@@ -729,7 +729,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         function: u8,
         increment: bool,
         addr: u32, // 17-bit
-        buf: &Aligned<A4, [u8]>,
+        buf: &mut Aligned<A4, [u8]>,
     ) -> Result<(), MmcError> {
         self.bus
             .bus
@@ -748,7 +748,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         &mut self,
         func: u8,
         mut addr: u32,
-        buf: &Aligned<A4, [u8]>,
+        buf: &mut Aligned<A4, [u8]>,
     ) -> Result<(), MmcError> {
         // Use buf.len() (Deref to [u8]) not size_of_val, which rounds up to 4 bytes.
         let byte_part = buf.len() % BLOCK_SIZE;
@@ -759,7 +759,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
                 func,
                 true,
                 addr,
-                slice_to_blocks::<A4, BLOCK_SIZE>(&buf[..block_part]),
+                slice_to_blocks_mut::<A4, BLOCK_SIZE>(&mut buf[..block_part]),
             )
             .await?;
 
@@ -767,7 +767,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         }
 
         if byte_part > 0 {
-            self.cmd53_write_bytes(func, true, addr, &buf[block_part..])
+            self.cmd53_write_bytes(func, true, addr, &mut buf[block_part..])
                 .await?;
         }
 
