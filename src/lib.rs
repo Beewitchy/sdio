@@ -187,15 +187,23 @@ pub trait ByteCommand: Command {
 pub trait ControlCommand: Command {}
 
 /// BlockReadCommand: block-mode read (CMD17, CMD18)
+///
+/// This is a marker trait to prevent incorrect method calls with these commands.
 pub trait BlockReadCommand: BlockCommand {}
 
 /// BlockWriteCommand: block-mode write (CMD24, CMD25)
+///
+/// This is a marker trait to prevent incorrect method calls with these commands.
 pub trait BlockWriteCommand: BlockCommand {}
 
 /// ByteReadCommand: byte-mode read (CMD53 byte read)
+///
+/// This is a marker trait to prevent incorrect method calls with these commands.
 pub trait ByteReadCommand: ByteCommand {}
 
 /// ByteWriteCommand: byte-mode write (CMD53 byte write)
+///
+/// This is a marker trait to prevent incorrect method calls with these commands.
 pub trait ByteWriteCommand: ByteCommand {}
 
 /// ---------------------------------------------------------------------------
