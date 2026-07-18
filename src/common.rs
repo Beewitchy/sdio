@@ -1,5 +1,5 @@
 use core::marker::PhantomData;
-use core::{fmt, mem, slice};
+use core::fmt;
 
 use core::fmt::Debug;
 
@@ -31,6 +31,8 @@ pub fn idle() -> Cmd0 {
     Cmd0
 }
 
+pub type Idle = Cmd0;
+
 /// CMD0 — GO_IDLE_STATE (SPI)
 pub struct Cmd0S;
 
@@ -48,6 +50,8 @@ pub fn idle_spi() -> Cmd0S {
     Cmd0S
 }
 
+pub type IdleSpi = Cmd0S;
+
 /// CMD2 — ALL_SEND_CID
 pub struct Cmd2;
 impl Command for Cmd2 {
@@ -63,6 +67,8 @@ impl ControlCommand for Cmd2 {}
 pub fn all_send_cid() -> Cmd2 {
     Cmd2
 }
+
+pub type AllSendCid = Cmd2;
 
 /// CMD7 — SELECT/DESELECT_CARD
 pub struct Cmd7 {
@@ -134,6 +140,8 @@ pub fn stop_transmission() -> Cmd12 {
     Cmd12
 }
 
+pub type StopTransmission = Cmd2;
+
 /// CMD13 — SEND_STATUS
 pub struct Cmd13 {
     pub rca: u16,
@@ -180,7 +188,7 @@ pub fn set_block_length(block_len: u32) -> Cmd16 {
 /// CMD17 — READ_SINGLE_BLOCK
 pub struct Cmd17<'a, const BLOCK_SIZE: usize> {
     pub addr: u32,
-    pub buf: &'a mut Aligned<A4, [u8; BLOCK_SIZE]>,
+    pub buf: &'a mut [Aligned<A4, [u8; BLOCK_SIZE]>],
 }
 impl<'a, const BLOCK_SIZE: usize> Command for Cmd17<'a, BLOCK_SIZE> {
     const INDEX: u8 = 17;
@@ -193,25 +201,23 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd17<'a, BLOCK_SIZE> {
     }
 }
 impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd17<'a, BLOCK_SIZE> {
-    fn block_size(&self) -> BlockSize {
-        block_size(BLOCK_SIZE)
-    }
+    type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         1
     }
-}
-impl<'a, const BLOCK_SIZE: usize> BlockReadCommand for Cmd17<'a, BLOCK_SIZE> {
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
+    fn buf(&mut self) -> &mut [Self::Block] {
         &mut *self.buf
     }
 }
+
+impl<'a, const BLOCK_SIZE: usize> BlockReadCommand for Cmd17<'a, BLOCK_SIZE> {}
 
 /// CMD17: Read a single block from the card
 pub fn read_single_block<const BLOCK_SIZE: usize>(
     addr: u32,
     buf: &mut Aligned<A4, [u8; BLOCK_SIZE]>,
 ) -> Cmd17<'_, BLOCK_SIZE> {
-    Cmd17 { addr, buf }
+    Cmd17 { addr, buf: core::slice::from_mut(buf) }
 }
 
 /// CMD18 — READ_MULTIPLE_BLOCK
@@ -230,23 +236,15 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd18<'a, BLOCK_SIZE> {
     }
 }
 impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd18<'a, BLOCK_SIZE> {
-    fn block_size(&self) -> BlockSize {
-        block_size(BLOCK_SIZE)
-    }
-
+    type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         self.buf.len() as u32
     }
+    fn buf(&mut self) -> &mut [Self::Block] {
+        self.buf
+    }
 }
 impl<'a, const BLOCK_SIZE: usize> BlockReadCommand for Cmd18<'a, BLOCK_SIZE> {
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
-        unsafe {
-            mem::transmute(slice::from_raw_parts_mut(
-                self.buf.as_mut_ptr() as *mut _,
-                size_of_val(self.buf),
-            ))
-        }
-    }
 }
 
 /// CMD18: Read multiple block from the card
@@ -260,7 +258,7 @@ pub fn read_multiple_blocks<const BLOCK_SIZE: usize>(
 /// CMD24 — WRITE_BLOCK
 pub struct Cmd24<'a, const BLOCK_SIZE: usize> {
     pub addr: u32,
-    pub buf: &'a mut Aligned<A4, [u8; BLOCK_SIZE]>,
+    pub buf: &'a mut [Aligned<A4, [u8; BLOCK_SIZE]>],
 }
 impl<'a, const BLOCK_SIZE: usize> Command for Cmd24<'a, BLOCK_SIZE> {
     const INDEX: u8 = 24;
@@ -273,25 +271,23 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd24<'a, BLOCK_SIZE> {
     }
 }
 impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd24<'a, BLOCK_SIZE> {
-    fn block_size(&self) -> BlockSize {
-        block_size(BLOCK_SIZE)
-    }
+    type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         1
     }
-}
-impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd24<'a, BLOCK_SIZE> {
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
+    fn buf(&mut self) -> &mut [Self::Block] {
         self.buf
     }
 }
+
+impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd24<'a, BLOCK_SIZE> {}
 
 /// CMD24: Write block
 pub fn write_single_block<const BLOCK_SIZE: usize>(
     addr: u32,
     buf: &mut Aligned<A4, [u8; BLOCK_SIZE]>,
 ) -> Cmd24<'_, BLOCK_SIZE> {
-    Cmd24 { addr, buf }
+    Cmd24 { addr, buf: core::slice::from_mut(buf) }
 }
 
 /// CMD25 — WRITE_MULTIPLE_BLOCK
@@ -310,22 +306,16 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd25<'a, BLOCK_SIZE> {
     }
 }
 impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd25<'a, BLOCK_SIZE> {
-    fn block_size(&self) -> BlockSize {
-        block_size(BLOCK_SIZE)
-    }
+    type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         self.buf.len() as u32
     }
+
+    fn buf(&mut self) -> &mut [Self::Block] {
+        self.buf
+    }
 }
 impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd25<'a, BLOCK_SIZE> {
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
-        unsafe {
-            mem::transmute(slice::from_raw_parts_mut(
-                self.buf.as_mut_ptr() as *mut _,
-                size_of_val(self.buf),
-            ))
-        }
-    }
 }
 
 /// CMD25: Write multiple blocks

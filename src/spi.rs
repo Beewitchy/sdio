@@ -4,8 +4,36 @@ use embedded_hal_async::spi::SpiBus;
 
 use crate::{
     BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand, ByteWriteCommand, Command,
-    ControlCommand, MmcBus, MmcError, Response, ResponseLen,
+    ControlCommand, MmcBus, MmcError, Response, ResponseLen, R1,
 };
+
+/// CRC_ON_OFF for SPI mode
+///
+/// CRC checking is disabled by default in SPI mode.
+///
+/// This command should be sent BEFORE ACmd41 to change
+/// the setting.
+///
+/// See Physical Layer Simplified Specification section 7.2.2
+/// Bus Transfer Protection.
+pub enum Cmd59 {
+    On,
+    Off,
+}
+
+impl Command for Cmd59 {
+    const INDEX: u8 = 59;
+    type Resp<'a> = R1;
+    fn arg(&self) -> u32 {
+        match self {
+            Self::On => 0x00000001,
+            Self::Off => 0x00000000,
+        }
+    }
+}
+impl ControlCommand for Cmd59 {}
+
+pub type CrcOnOff = Cmd59;
 
 pub trait SetHz {
     fn set_hz(&mut self, hz: u32);
@@ -224,12 +252,12 @@ where
         }
 
         self.send_cmd_header(&cmd).await?;
-        let block_size = cmd.block_size().len();
-        let total = block_size * cmd.block_count() as usize;
+        let total = cmd.block_count() as usize;
         let slice = &mut cmd.buf()[..total];
 
-        for chunk in slice.chunks_mut(block_size) {
-            self.read_block(chunk).await?;
+        use as_slice::AsMutSlice as _;
+        for block in slice {
+            self.read_block(block.as_mut_slice()).await?;
         }
 
         let resp = self.read_response_words::<C::Resp<'_>>().await?;
@@ -250,12 +278,12 @@ where
         }
 
         self.send_cmd_header(&cmd).await?;
-        let block_size = cmd.block_size().len();
-        let total = block_size * cmd.block_count() as usize;
+        let total = cmd.block_count() as usize;
         let slice = &mut cmd.buf()[..total];
 
-        for chunk in slice.chunks(block_size) {
-            self.write_block(chunk).await?;
+        use as_slice::AsSlice as _;
+        for block in slice {
+            self.write_block(block.as_slice()).await?;
         }
 
         let resp = self.read_response_words::<C::Resp<'_>>().await?;

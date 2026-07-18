@@ -2,7 +2,7 @@
 // SDIO COMMANDS
 // ============================================================================
 
-use core::{fmt, mem, slice};
+use core::fmt;
 
 use aligned::{A4, Aligned};
 use embedded_hal_async::delay::DelayNs;
@@ -11,7 +11,7 @@ use crate::{
     BlockCommand, BlockReadCommand, BlockWriteCommand, BusAdapter, BusWidth, ByteCommand,
     ByteReadCommand, ByteWriteCommand, Command, ControlCommand, MmcBus, MmcError, R4, R5,
     block_device::slice_to_blocks_mut,
-    sd::{self, BlockSize, OCR, RCA, block_size},
+    sd::{self, OCR, RCA},
 };
 
 /// Type marker for SD-specific extensions.
@@ -97,12 +97,12 @@ impl<'a> ByteCommand for Cmd53ByteRead<'a> {
     fn byte_count(&self) -> usize {
         self.buf.len()
     }
-}
-
-impl<'a> ByteReadCommand for Cmd53ByteRead<'a> {
     fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
         &mut *self.buf
     }
+}
+
+impl<'a> ByteReadCommand for Cmd53ByteRead<'a> {
 }
 
 /// CMD53 — IO_RW_EXTENDED (byte mode write)
@@ -135,12 +135,12 @@ impl<'a> ByteCommand for Cmd53ByteWrite<'a> {
     fn byte_count(&self) -> usize {
         self.buf.len()
     }
-}
-
-impl<'a> ByteWriteCommand for Cmd53ByteWrite<'a> {
     fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
         self.buf
     }
+}
+
+impl<'a> ByteWriteCommand for Cmd53ByteWrite<'a> {
 }
 
 /// CMD53 — IO_RW_EXTENDED (block mode read)
@@ -170,24 +170,19 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd53BlockRead<'a, BLOCK_SIZE> {
 }
 
 impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd53BlockRead<'a, BLOCK_SIZE> {
-    fn block_size(&self) -> BlockSize {
-        block_size(BLOCK_SIZE)
-    }
+    type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
 
     fn block_count(&self) -> u32 {
         self.buf.len() as u32
     }
+
+    fn buf(&mut self) -> &mut [Self::Block] {
+        self.buf
+    }
 }
 
 impl<'a, const BLOCK_SIZE: usize> BlockReadCommand for Cmd53BlockRead<'a, BLOCK_SIZE> {
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
-        unsafe {
-            mem::transmute(slice::from_raw_parts_mut(
-                self.buf.as_mut_ptr() as *mut _,
-                size_of_val(self.buf),
-            ))
-        }
-    }
+
 }
 
 /// CMD53 — IO_RW_EXTENDED (block mode write)
@@ -217,24 +212,18 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd53BlockWrite<'a, BLOCK_SIZE> {
 }
 
 impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd53BlockWrite<'a, BLOCK_SIZE> {
-    fn block_size(&self) -> BlockSize {
-        block_size(BLOCK_SIZE)
-    }
+    type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
 
     fn block_count(&self) -> u32 {
         self.buf.len() as u32
     }
+
+    fn buf(&mut self) -> &mut [Self::Block] {
+        self.buf
+    }
 }
 
 impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd53BlockWrite<'a, BLOCK_SIZE> {
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
-        unsafe {
-            mem::transmute(slice::from_raw_parts_mut(
-                self.buf.as_mut_ptr() as *mut _,
-                size_of_val(self.buf),
-            ))
-        }
-    }
 }
 
 impl OCR<SDIO> {

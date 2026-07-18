@@ -122,17 +122,16 @@ impl<'a> Command for Cmd8<'a> {
     }
 }
 impl<'a> BlockCommand for Cmd8<'a> {
-    fn block_size(&self) -> BlockSize {
-        block_size(512)
-    }
+    type Block = Aligned<A4, [u8; 512]>;
     fn block_count(&self) -> u32 {
         1
     }
+    fn buf(&mut self) -> &mut [Self::Block] {
+        core::slice::from_mut(self.buf)
+    }
 }
 impl<'a> BlockReadCommand for Cmd8<'a> {
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
-        &mut *self.buf
-    }
+
 }
 
 /// CMD8: Device sends its EXT_CSD register as a block of data.

@@ -265,7 +265,7 @@ impl MmcBus for DummyMmcBus {
             // CMD6 (mode=0) — SWITCH FUNCTION STATUS (64 bytes)
             if C::INDEX == 6 {
                 let buf = cmd.buf();
-                let data = &mut *buf[..];
+                let data = &mut buf[0][..];
                 data.copy_from_slice(&st.switch_status);
                 st.set_busy(1);
                 return Ok(DummyMmcBus::make_response([0, 0, 0, 0]));
@@ -274,7 +274,7 @@ impl MmcBus for DummyMmcBus {
             // ACMD51 — SEND_SCR (8 bytes)
             if C::INDEX == 51 {
                 let buf = cmd.buf();
-                let data = &mut *buf[..];
+                let data = &mut buf[0][..];
                 data[..8].copy_from_slice(&st.scr);
                 st.set_busy(1);
                 return Ok(DummyMmcBus::make_response([0, 0, 0, 0]));
@@ -283,7 +283,7 @@ impl MmcBus for DummyMmcBus {
             // ACMD13 — SD_STATUS (64 bytes)
             if C::INDEX == 13 {
                 let buf = cmd.buf();
-                let data = &mut *buf[..];
+                let data = &mut buf[0][..];
                 data[..64].copy_from_slice(&st.sd_status);
                 st.set_busy(1);
                 return Ok(DummyMmcBus::make_response([0, 0, 0, 0]));
@@ -291,7 +291,7 @@ impl MmcBus for DummyMmcBus {
 
             // Normal data read from storage
             let block = cmd.arg() as usize;
-            let bs = cmd.block_size().len();
+            let bs = C::block_size().len();
             let count = cmd.block_count() as usize;
             let start = block * bs;
             let end = start + bs * count;
@@ -300,7 +300,7 @@ impl MmcBus for DummyMmcBus {
                 return Err(MmcError::Io);
             }
 
-            let buf = cmd.buf();
+            let buf = unsafe { core::slice::from_raw_parts_mut(cmd.buf().as_mut_ptr() as *mut u8, cmd.buf().len() * bs) };
             buf.copy_from_slice(&st.storage[start..end]);
 
             st.set_busy(1);
@@ -326,7 +326,7 @@ impl MmcBus for DummyMmcBus {
             DummyMmcBus::wait_busy_if_needed::<C::Resp<'_>>(&mut st)?;
 
             let block = cmd.arg() as usize;
-            let bs = cmd.block_size().len();
+            let bs = C::block_size().len();
             let count = cmd.block_count() as usize;
             let start = block * bs;
             let end = start + bs * count;
@@ -335,7 +335,7 @@ impl MmcBus for DummyMmcBus {
                 return Err(MmcError::Io);
             }
 
-            let buf = cmd.buf();
+            let buf = unsafe { core::slice::from_raw_parts(cmd.buf().as_ptr() as *const u8, cmd.buf().len() * bs) };
             st.storage[start..end].copy_from_slice(buf);
 
             st.set_busy(2);

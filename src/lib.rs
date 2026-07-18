@@ -142,47 +142,61 @@ pub trait Command {
     fn arg(&self) -> u32;
 }
 
+pub trait BlockBuffer:
+    as_slice::AsMutSlice<Element = u8>
+    + core::ops::DerefMut<Target: core::ops::IndexMut<core::ops::RangeFull, Output = [u8]>>
+{
+    const SIZE: BlockSize;
+}
+
+impl<A, const SIZE: usize> BlockBuffer for aligned::Aligned<A, [u8; SIZE]>
+where
+    A: aligned::Alignment,
+{
+    const SIZE: BlockSize = block_size(SIZE);
+}
+
 /// Block mode: fixed-size blocks (CMD17/18/24/25, CMD53 block mode)
 pub trait BlockCommand: Command {
+    type Block: BlockBuffer;
+
     /// Size of each block in bytes (usually 512 for SD/MMC).
-    fn block_size(&self) -> BlockSize;
+    fn block_size() -> BlockSize {
+        Self::Block::SIZE
+    }
 
     /// Number of blocks to transfer.
     fn block_count(&self) -> u32;
+
+    /// Exclusive buffer for block-mode reads/writes. The length of each buffer
+    /// must be `BLOCK_SIZE`, and there must be `block_count()` total
+    /// buffers in the slice
+    fn buf(&mut self) -> &mut [Self::Block];
 }
 
 /// Byte mode: arbitrary byte counts (CMD53 byte mode, SPI multi-byte)
 pub trait ByteCommand: Command {
     /// Number of bytes to transfer (arbitrary length).
     fn byte_count(&self) -> usize;
+
+    /// Buffer for byte-mode writes. The length of this buffer must be `byte_count()`.
+    fn buf(&mut self) -> &mut Aligned<A4, [u8]>;
 }
 
 /// ControlCommand: commands with no data transfer (CMD0, CMD8, CMD55, etc.)
 pub trait ControlCommand: Command {}
 
 /// BlockReadCommand: block-mode read (CMD17, CMD18)
-pub trait BlockReadCommand: BlockCommand {
-    /// Mutable buffer for block-mode reads. The length of this buffer must be `block_size()` * `block_count()`
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]>;
-}
+pub trait BlockReadCommand: BlockCommand {}
 
 /// BlockWriteCommand: block-mode write (CMD24, CMD25)
-pub trait BlockWriteCommand: BlockCommand {
-    /// Buffer for block-mode writes. The length of this buffer must be `block_size()` * `block_count()`
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]>;
-}
+pub trait BlockWriteCommand: BlockCommand {}
 
 /// ByteReadCommand: byte-mode read (CMD53 byte read)
-pub trait ByteReadCommand: ByteCommand {
-    /// Mutable buffer for byte-mode reads. The length of this buffer must be `byte_count()`.
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]>;
-}
+pub trait ByteReadCommand: ByteCommand {}
 
 /// ByteWriteCommand: byte-mode write (CMD53 byte write)
-pub trait ByteWriteCommand: ByteCommand {
-    /// Buffer for byte-mode writes. The length of this buffer must be `byte_count()`.
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]>;
-}
+pub trait ByteWriteCommand: ByteCommand {}
 
 /// ---------------------------------------------------------------------------
 /// MmcBus Trait
@@ -792,20 +806,22 @@ impl<T: Command> Command for &mut T {
 impl<T: ControlCommand> ControlCommand for &T {}
 
 impl<T: BlockCommand> BlockCommand for &mut T {
+    type Block = T::Block;
+
+    fn block_size() -> BlockSize {
+        T::block_size()
+    }
+
     fn block_count(&self) -> u32 {
-        T::block_count(self)
+        T::block_count(*self)
     }
 
-    fn block_size(&self) -> BlockSize {
-        T::block_size(self)
+    fn buf(&mut self) -> &mut [Self::Block] {
+        T::buf(*self)
     }
 }
 
-impl<T: BlockReadCommand> BlockReadCommand for &mut T {
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
-        T::buf(self)
-    }
-}
+impl<T: BlockReadCommand> BlockReadCommand for &mut T {}
 
 /// Bus Adapter that implements common functionality of all bus users
 struct BusAdapter<B: MmcBus, D: DelayNs> {

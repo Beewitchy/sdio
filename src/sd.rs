@@ -51,19 +51,19 @@ impl<'a> Command for Cmd6<'a> {
     }
 }
 impl<'a> BlockCommand for Cmd6<'a> {
-    fn block_size(&self) -> BlockSize {
-        block_size(64)
-    }
+    type Block = Aligned<A4, [u8; 64]>;
 
     fn block_count(&self) -> u32 {
         1
     }
+
+    fn buf(&mut self) -> &mut [Self::Block] {
+        core::slice::from_mut(self.buf)
+    }
 }
 
 impl<'a> BlockReadCommand for Cmd6<'a> {
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
-        &mut *self.buf
-    }
+
 }
 
 /// CMD6 — SWITCH_FUNCTION
@@ -125,19 +125,18 @@ impl<'b> Command for Cmd19<'b> {
     }
 }
 impl<'a> BlockCommand for Cmd19<'a> {
+    type Block = Aligned<A4, [u8; 64]>;
+
     fn block_count(&self) -> u32 {
         1
     }
 
-    fn block_size(&self) -> BlockSize {
-        block_size(64)
+    fn buf(&mut self) -> &mut [Self::Block] {
+        core::slice::from_mut(self.buf)
     }
 }
 
 impl<'a> BlockReadCommand for Cmd19<'a> {
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
-        self.buf
-    }
 }
 
 impl<'a> TuningOp for Cmd19<'a> {
@@ -329,17 +328,17 @@ impl<'a> Command for Acmd13<'a> {
     }
 }
 impl<'a> BlockCommand for Acmd13<'a> {
-    fn block_size(&self) -> BlockSize {
-        block_size(64)
-    }
+    type Block = Aligned<A4, [u8; 64]>;
+
     fn block_count(&self) -> u32 {
         1
     }
+
+    fn buf(&mut self) -> &mut [Self::Block] {
+        core::slice::from_mut(self.buf)
+    }
 }
 impl<'a> BlockReadCommand for Acmd13<'a> {
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
-        &mut *self.buf
-    }
 }
 
 /// ACMD13: SD Status
@@ -418,17 +417,17 @@ impl<'a> Command for Acmd51<'a> {
     }
 }
 impl<'a> BlockCommand for Acmd51<'a> {
-    fn block_size(&self) -> BlockSize {
-        block_size(8)
-    }
+type Block = Aligned<A4, [u8; 8]>;
+
     fn block_count(&self) -> u32 {
         1
     }
+
+    fn buf(&mut self) -> &mut [Self::Block] {
+        core::slice::from_mut(self.inner)
+    }
 }
 impl<'a> BlockReadCommand for Acmd51<'a> {
-    fn buf(&mut self) -> &mut Aligned<A4, [u8]> {
-        &mut *self.inner
-    }
 }
 
 /// ACMD51: Reads the SCR
