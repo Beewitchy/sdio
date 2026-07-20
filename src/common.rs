@@ -198,14 +198,22 @@ pub type SendStatus = Cmd13;
 pub struct Cmd16 {
     pub block_len: u32,
 }
-impl Command for Cmd16 {
+impl CommandIndex for Cmd16 {
     const INDEX: u8 = 16;
+}
+impl Command<SdMode> for Cmd16 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         self.block_len
     }
 }
-impl ControlCommand for Cmd16 {}
+impl Command<spi::SpiMode> for Cmd16 {
+    type Resp<'a> = spi::R1;
+    fn arg(&self) -> u32 {
+        self.block_len
+    }
+}
+impl<M> ControlCommand<M> for Cmd16 {}
 
 /// CMD16: Set block len
 pub fn set_block_length(block_len: u32) -> Cmd16 {
@@ -217,8 +225,10 @@ pub struct Cmd17<'a, const BLOCK_SIZE: usize> {
     pub addr: u32,
     pub buf: &'a mut [Aligned<A4, [u8; BLOCK_SIZE]>],
 }
-impl<'a, const BLOCK_SIZE: usize> Command for Cmd17<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize> CommandIndex for Cmd17<'a, BLOCK_SIZE> {
     const INDEX: u8 = 17;
+}
+impl<'a, const BLOCK_SIZE: usize> Command<SdMode> for Cmd17<'a, BLOCK_SIZE> {
     type Resp<'b>
         = R1
     where
@@ -227,7 +237,16 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd17<'a, BLOCK_SIZE> {
         self.addr
     }
 }
-impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd17<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize> Command<spi::SpiMode> for Cmd17<'a, BLOCK_SIZE> {
+    type Resp<'b>
+        = spi::R1
+    where
+        Self: 'b;
+    fn arg(&self) -> u32 {
+        self.addr
+    }
+}
+impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd17<'a, BLOCK_SIZE> {
     type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         1
@@ -237,7 +256,7 @@ impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd17<'a, BLOCK_SIZE> {
     }
 }
 
-impl<'a, const BLOCK_SIZE: usize> BlockReadCommand for Cmd17<'a, BLOCK_SIZE> {}
+impl<'a, const BLOCK_SIZE: usize, M> BlockReadCommand<M> for Cmd17<'a, BLOCK_SIZE> {}
 
 /// CMD17: Read a single block from the card
 pub fn read_single_block<const BLOCK_SIZE: usize>(
@@ -253,10 +272,12 @@ pub fn read_single_block<const BLOCK_SIZE: usize>(
 /// CMD18 — READ_MULTIPLE_BLOCK
 pub struct Cmd18<'a, const BLOCK_SIZE: usize> {
     pub addr: u32,
-    pub buf: &'a mut [Aligned<A4, [u8; BLOCK_SIZE]>],
+    pub bufs: &'a mut [Aligned<A4, [u8; BLOCK_SIZE]>],
 }
-impl<'a, const BLOCK_SIZE: usize> Command for Cmd18<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize> CommandIndex for Cmd18<'a, BLOCK_SIZE> {
     const INDEX: u8 = 18;
+}
+impl<'a, const BLOCK_SIZE: usize> Command<SdMode> for Cmd18<'a, BLOCK_SIZE> {
     type Resp<'b>
         = R1
     where
@@ -265,23 +286,32 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd18<'a, BLOCK_SIZE> {
         self.addr
     }
 }
-impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd18<'a, BLOCK_SIZE> {
-    type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
-    fn block_count(&self) -> u32 {
-        self.buf.len() as u32
-    }
-    fn buf(&mut self) -> &mut [Self::Block] {
-        self.buf
+impl<'a, const BLOCK_SIZE: usize> Command<spi::SpiMode> for Cmd18<'a, BLOCK_SIZE> {
+    type Resp<'b>
+        = spi::R1
+    where
+        Self: 'b;
+    fn arg(&self) -> u32 {
+        self.addr
     }
 }
-impl<'a, const BLOCK_SIZE: usize> BlockReadCommand for Cmd18<'a, BLOCK_SIZE> {}
+impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd18<'a, BLOCK_SIZE> {
+    type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
+    fn block_count(&self) -> u32 {
+        self.bufs.len() as u32
+    }
+    fn buf(&mut self) -> &mut [Self::Block] {
+        self.bufs
+    }
+}
+impl<'a, const BLOCK_SIZE: usize, M> BlockReadCommand<M> for Cmd18<'a, BLOCK_SIZE> {}
 
 /// CMD18: Read multiple block from the card
 pub fn read_multiple_blocks<const BLOCK_SIZE: usize>(
     addr: u32,
-    buf: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
+    bufs: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
 ) -> Cmd18<'_, BLOCK_SIZE> {
-    Cmd18 { addr, buf }
+    Cmd18 { addr, bufs }
 }
 
 /// CMD24 — WRITE_BLOCK
@@ -289,8 +319,10 @@ pub struct Cmd24<'a, const BLOCK_SIZE: usize> {
     pub addr: u32,
     pub buf: &'a mut [Aligned<A4, [u8; BLOCK_SIZE]>],
 }
-impl<'a, const BLOCK_SIZE: usize> Command for Cmd24<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize> CommandIndex for Cmd24<'a, BLOCK_SIZE> {
     const INDEX: u8 = 24;
+}
+impl<'a, const BLOCK_SIZE: usize> Command<SdMode> for Cmd24<'a, BLOCK_SIZE> {
     type Resp<'b>
         = R1b
     where
@@ -299,7 +331,16 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd24<'a, BLOCK_SIZE> {
         self.addr
     }
 }
-impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd24<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize> Command<spi::SpiMode> for Cmd24<'a, BLOCK_SIZE> {
+    type Resp<'b>
+        = spi::R1b
+    where
+        Self: 'b;
+    fn arg(&self) -> u32 {
+        self.addr
+    }
+}
+impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd24<'a, BLOCK_SIZE> {
     type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         1
@@ -309,7 +350,7 @@ impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd24<'a, BLOCK_SIZE> {
     }
 }
 
-impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd24<'a, BLOCK_SIZE> {}
+impl<'a, const BLOCK_SIZE: usize, M> BlockWriteCommand<M> for Cmd24<'a, BLOCK_SIZE> {}
 
 /// CMD24: Write block
 pub fn write_single_block<const BLOCK_SIZE: usize>(
@@ -325,10 +366,12 @@ pub fn write_single_block<const BLOCK_SIZE: usize>(
 /// CMD25 — WRITE_MULTIPLE_BLOCK
 pub struct Cmd25<'a, const BLOCK_SIZE: usize> {
     pub addr: u32,
-    pub buf: &'a mut [Aligned<A4, [u8; BLOCK_SIZE]>],
+    pub bufs: &'a mut [Aligned<A4, [u8; BLOCK_SIZE]>],
 }
-impl<'a, const BLOCK_SIZE: usize> Command for Cmd25<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize> CommandIndex for Cmd25<'a, BLOCK_SIZE> {
     const INDEX: u8 = 25;
+}
+impl<'a, const BLOCK_SIZE: usize> Command<SdMode> for Cmd25<'a, BLOCK_SIZE> {
     type Resp<'b>
         = R1b
     where
@@ -337,24 +380,33 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd25<'a, BLOCK_SIZE> {
         self.addr
     }
 }
-impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd25<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize> Command<spi::SpiMode> for Cmd25<'a, BLOCK_SIZE> {
+    type Resp<'b>
+        = spi::R1b
+    where
+        Self: 'b;
+    fn arg(&self) -> u32 {
+        self.addr
+    }
+}
+impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd25<'a, BLOCK_SIZE> {
     type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
-        self.buf.len() as u32
+        self.bufs.len() as u32
     }
 
     fn buf(&mut self) -> &mut [Self::Block] {
-        self.buf
+        self.bufs
     }
 }
-impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd25<'a, BLOCK_SIZE> {}
+impl<'a, const BLOCK_SIZE: usize, M> BlockWriteCommand<M> for Cmd25<'a, BLOCK_SIZE> {}
 
 /// CMD25: Write multiple blocks
 pub fn write_multiple_blocks<const BLOCK_SIZE: usize>(
     addr: u32,
-    buf: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
+    bufs: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
 ) -> Cmd25<'_, BLOCK_SIZE> {
-    Cmd25 { addr, buf }
+    Cmd25 { addr, bufs }
 }
 
 // /// CMD27: Program CSD
@@ -364,14 +416,16 @@ pub fn write_multiple_blocks<const BLOCK_SIZE: usize>(
 
 /// CMD38 — ERASE (R1b)
 pub struct Cmd38;
-impl Command for Cmd38 {
+impl CommandIndex for Cmd38 {
     const INDEX: u8 = 38;
-    type Resp<'a> = R1b;
-    fn arg(&self) -> u32 {
-        0
-    }
 }
-impl ControlCommand for Cmd38 {}
+impl Command<SdMode> for Cmd38 {
+    type Resp<'a> = R1b;
+}
+impl Command<spi::SpiMode> for Cmd38 {
+    type Resp<'a> = spi::R1b;
+}
+impl<M> ControlCommand<M> for Cmd38 {}
 
 /// CMD38: Erase all previously selected write blocks
 pub fn erase() -> Cmd38 {
@@ -382,14 +436,22 @@ pub fn erase() -> Cmd38 {
 pub struct Cmd55 {
     pub rca: u16,
 }
-impl Command for Cmd55 {
+impl CommandIndex for Cmd55 {
     const INDEX: u8 = 55;
+}
+impl Command<SdMode> for Cmd55 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         (self.rca as u32) << 16
     }
 }
-impl ControlCommand for Cmd55 {}
+impl Command<spi::SpiMode> for Cmd55 {
+    type Resp<'a> = spi::R1;
+    fn arg(&self) -> u32 {
+        0
+    }
+}
+impl<M> ControlCommand<M> for Cmd55 {}
 
 /// CMD55: App Command. Indicates that next command will be a app command
 pub fn app_cmd(rca: u16) -> Cmd55 {

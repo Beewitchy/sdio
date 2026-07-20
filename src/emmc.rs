@@ -6,7 +6,7 @@ use embedded_hal_async::delay::DelayNs;
 pub use crate::common::*;
 use crate::{
     Acquirable, Addressable, BlockCommand, BlockDevice, BlockReadCommand, BusAdapter, BusWidth,
-    Command, ControlCommand, MmcBus, MmcError, R1, R1b, R3, common,
+    Command, CommandIndex, ControlCommand, MmcBus, MmcError, R1, R1b, R3, SdMode, common, spi,
 };
 
 use core::{convert::TryInto, fmt, marker::PhantomData, str};
@@ -20,27 +20,37 @@ use core::{convert::TryInto, fmt, marker::PhantomData, str};
 pub struct Cmd1 {
     pub ocr: u32,
 }
-impl Command for Cmd1 {
+impl CommandIndex for Cmd1 {
     const INDEX: u8 = 1;
+}
+impl Command<SdMode> for Cmd1 {
     type Resp<'a> = R3;
     fn arg(&self) -> u32 {
         self.ocr
     }
 }
-impl ControlCommand for Cmd1 {}
+impl Command<spi::SpiMode> for Cmd1 {
+    type Resp<'a> = spi::R1;
+    fn arg(&self) -> u32 {
+        self.ocr
+    }
+}
+impl<M> ControlCommand<M> for Cmd1 {}
 
 /// CMD3 — ASSIGN_RELATIVE_ADDR (RCA)
 pub struct Cmd3 {
     pub address: u16,
 }
-impl Command for Cmd3 {
+impl CommandIndex for Cmd3 {
     const INDEX: u8 = 3;
+}
+impl Command<SdMode> for Cmd3 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         (self.address as u32) << 16
     }
 }
-impl ControlCommand for Cmd3 {}
+impl ControlCommand<SdMode> for Cmd3 {}
 
 /// CMD3: Assigns relative address (RCA) to the Device
 pub fn assign_relative_address(address: u16) -> Cmd3 {
@@ -59,14 +69,16 @@ pub struct Cmd5 {
     pub sleep: bool,
     pub rca: u16,
 }
-impl Command for Cmd5 {
+impl CommandIndex for Cmd5 {
     const INDEX: u8 = 5;
+}
+impl Command<SdMode> for Cmd5 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         ((self.sleep as u32) << 15) | ((self.rca as u32) << 16)
     }
 }
-impl ControlCommand for Cmd5 {}
+impl ControlCommand<SdMode> for Cmd5 {}
 
 /// CMD6 — SWITCH (MMC version)
 /// Used to write EXT_CSD fields.
@@ -76,8 +88,10 @@ pub struct Cmd6 {
     pub value: u8,   // value to write
     pub cmd_set: u8, // usually 0
 }
-impl Command for Cmd6 {
+impl CommandIndex for Cmd6 {
     const INDEX: u8 = 6;
+}
+impl Command<SdMode> for Cmd6 {
     type Resp<'a> = R1b; // MMC SWITCH returns R1b (busy)
     fn arg(&self) -> u32 {
         ((self.access as u32) << 24)
@@ -86,7 +100,16 @@ impl Command for Cmd6 {
             | (self.cmd_set as u32)
     }
 }
-impl ControlCommand for Cmd6 {}
+impl Command<spi::SpiMode> for Cmd6 {
+    type Resp<'a> = spi::R1b; // MMC SWITCH returns R1b (busy)
+    fn arg(&self) -> u32 {
+        ((self.access as u32) << 24)
+            | ((self.index as u32) << 16)
+            | ((self.value as u32) << 8)
+            | (self.cmd_set as u32)
+    }
+}
+impl<M> ControlCommand<M> for Cmd6 {}
 
 /// Specifies a method of modifying a field of EXT_CSD. Used for CMD6.
 pub enum AccessMode {
@@ -111,8 +134,10 @@ pub fn modify_ext_csd(access_mode: AccessMode, index: u8, value: u8) -> Cmd6 {
 pub struct Cmd8<'a> {
     pub buf: &'a mut Aligned<A4, [u8; 512]>,
 }
-impl<'a> Command for Cmd8<'a> {
+impl<'a> CommandIndex for Cmd8<'a> {
     const INDEX: u8 = 8;
+}
+impl<'a> Command<SdMode> for Cmd8<'a> {
     type Resp<'b>
         = R1
     where
@@ -121,7 +146,16 @@ impl<'a> Command for Cmd8<'a> {
         0
     }
 }
-impl<'a> BlockCommand for Cmd8<'a> {
+impl<'a> Command<spi::SpiMode> for Cmd8<'a> {
+    type Resp<'b>
+        = R1
+    where
+        Self: 'b;
+    fn arg(&self) -> u32 {
+        0
+    }
+}
+impl<'a, M> BlockCommand<M> for Cmd8<'a> {
     type Block = Aligned<A4, [u8; 512]>;
     fn block_count(&self) -> u32 {
         1
@@ -130,9 +164,7 @@ impl<'a> BlockCommand for Cmd8<'a> {
         core::slice::from_mut(self.buf)
     }
 }
-impl<'a> BlockReadCommand for Cmd8<'a> {
-
-}
+impl<'a, M> BlockReadCommand<M> for Cmd8<'a> {}
 
 /// CMD8: Device sends its EXT_CSD register as a block of data.
 pub fn send_ext_csd(ext_csd: &mut ExtCSD) -> Cmd8<'_> {
@@ -145,52 +177,60 @@ pub fn send_ext_csd(ext_csd: &mut ExtCSD) -> Cmd8<'_> {
 pub struct Cmd35 {
     pub addr: u32,
 }
-impl Command for Cmd35 {
+impl CommandIndex for Cmd35 {
     const INDEX: u8 = 35;
+}
+impl Command<SdMode> for Cmd35 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         self.addr
     }
 }
-impl ControlCommand for Cmd35 {}
+impl ControlCommand<SdMode> for Cmd35 {}
 
 /// CMD36 — ERASE_GROUP_END
 pub struct Cmd36 {
     pub addr: u32,
 }
-impl Command for Cmd36 {
+impl CommandIndex for Cmd36 {
     const INDEX: u8 = 36;
+}
+impl Command<SdMode> for Cmd36 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         self.addr
     }
 }
-impl ControlCommand for Cmd36 {}
+impl ControlCommand<SdMode> for Cmd36 {}
 
 /// CMD39 — FAST_IO (rarely used)
 pub struct Cmd39 {
     pub addr: u8,
     pub data: u8,
 }
-impl Command for Cmd39 {
+impl CommandIndex for Cmd39 {
     const INDEX: u8 = 39;
+}
+impl Command<SdMode> for Cmd39 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         ((self.addr as u32) << 8) | (self.data as u32)
     }
 }
-impl ControlCommand for Cmd39 {}
+impl ControlCommand<SdMode> for Cmd39 {}
 
 /// CMD40 — GO_IRQ_STATE (rare)
 pub struct Cmd40;
-impl Command for Cmd40 {
+impl CommandIndex for Cmd40 {
     const INDEX: u8 = 40;
+}
+impl Command<SdMode> for Cmd40 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         0
     }
 }
-impl ControlCommand for Cmd40 {}
+impl ControlCommand<SdMode> for Cmd40 {}
 
 //
 //

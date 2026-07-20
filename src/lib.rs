@@ -84,7 +84,7 @@ impl ResponseLenBytes for ResponseLen {
         match self {
             Self::Zero => 0,
             Self::R48 => 6,
-            Self::R136 => 17
+            Self::R136 => 17,
         }
     }
 }
@@ -118,11 +118,17 @@ pub trait Response: Sized {
 
     /// Parse the response from words
     fn from_words(buf: &Self::Words) -> Self;
+
+    fn to_result(self) -> Result<(), MmcError> {
+        Ok(())
+    }
 }
 
-pub trait ResponseWords: AsRef<[Self::Word]>
-        + core::ops::Index<usize, Output = Self::Word>
-        + core::ops::Index<core::ops::RangeFull, Output = [Self::Word]> {
+pub trait ResponseWords:
+    AsRef<[Self::Word]>
+    + core::ops::Index<usize, Output = Self::Word>
+    + core::ops::Index<core::ops::RangeFull, Output = [Self::Word]>
+{
     /// The basic element parsed for the response
     type Word;
 
@@ -176,7 +182,9 @@ pub trait Command<Mode>: CommandIndex {
         Self: 'a;
 
     /// Compute the 32-bit argument for this command.
-    fn arg(&self) -> u32;
+    fn arg(&self) -> u32 {
+        0
+    }
 }
 
 pub trait BlockBuffer:
@@ -574,13 +582,6 @@ impl CardError {
 }
 
 impl R1 {
-    pub fn to_result(&self) -> Result<(), MmcError> {
-        match CardError::from_bits(self.status) {
-            Some(e) => Err(MmcError::Card(e)),
-            None => Ok(()),
-        }
-    }
-
     pub fn app_cmd(&self) -> bool {
         self.status & (1 << 5) != 0
     }
@@ -613,6 +614,13 @@ impl Response for R1 {
     #[inline]
     fn from_words(buf: &Self::Words) -> Self {
         R1 { status: buf[0] }
+    }
+
+    fn to_result(self) -> Result<(), MmcError> {
+        match CardError::from_bits(self.status) {
+            Some(e) => Err(MmcError::Card(e)),
+            None => Ok(()),
+        }
     }
 }
 
@@ -809,15 +817,6 @@ impl SdioError {
     }
 }
 
-impl R5 {
-    pub fn to_result(&self) -> Result<(), MmcError> {
-        match SdioError::from_bits(self.flags) {
-            Some(e) => Err(MmcError::Sdio(e)),
-            None => Ok(()),
-        }
-    }
-}
-
 impl Response for R5 {
     type Words = [u32; 1];
     const CRC: bool = true;
@@ -828,6 +827,13 @@ impl Response for R5 {
         R5 {
             flags: ((v >> 8) & 0xFF) as u8,
             data: (v & 0xFF) as u8,
+        }
+    }
+
+    fn to_result(self) -> Result<(), MmcError> {
+        match SdioError::from_bits(self.flags) {
+            Some(e) => Err(MmcError::Sdio(e)),
+            None => Ok(()),
         }
     }
 }
@@ -852,7 +858,7 @@ impl<T: CommandIndex> CommandIndex for &mut T {
     const INDEX: u8 = T::INDEX;
 }
 
-impl<T: Command> Command for &T {
+impl<T: Command<M>, M> Command<M> for &T {
     type Resp<'a>
         = T::Resp<'a>
     where
@@ -863,7 +869,7 @@ impl<T: Command> Command for &T {
     }
 }
 
-impl<T: Command> Command for &mut T {
+impl<T: Command<M>, M> Command<M> for &mut T {
     type Resp<'a>
         = T::Resp<'a>
     where
@@ -903,7 +909,10 @@ struct BusAdapter<B: MmcBus, D: DelayNs> {
 
 impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     /// Send the app command notification if this is an app command
-    async fn app_cmd(&mut self, app_cmd: bool) -> Result<(), MmcError> {
+    async fn app_cmd(&mut self, app_cmd: bool) -> Result<(), MmcError>
+    where
+        common::Cmd55: ControlCommand<B::Mode>,
+    {
         if app_cmd {
             self.bus
                 .send_command(sd::app_cmd(self.rca))
@@ -915,12 +924,16 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     }
 
     /// Check whether the card is ready for data
-    async fn check_card(&mut self) -> bool {
+    async fn check_card(&mut self) -> bool
+    where
+        common::Cmd13: ControlCommand<B::Mode>,
+        CardStatus<()>: for<'all> From<<common::Cmd13 as Command<B::Mode>>::Resp<'all>>,
+    {
         if let Ok(status) = self
             .bus
             .send_command(common::card_status(self.rca, false))
             .await
-            && CardStatus::<()>::from(status).ready_for_data()
+            && CardStatus::from(status).ready_for_data()
         {
             true
         } else {
@@ -929,7 +942,11 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     }
 
     /// Wait for the card to be ready if required
-    async fn wait_if_required<R: Response>(&mut self) -> Result<(), MmcError> {
+    async fn wait_if_required<R: Response>(&mut self) -> Result<(), MmcError>
+    where
+        common::Cmd13: ControlCommand<B::Mode>,
+        CardStatus<()>: for<'all> From<<common::Cmd13 as Command<B::Mode>>::Resp<'all>>,
+    {
         if !R::BUSY {
             return Ok(());
         }
@@ -947,7 +964,11 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
         Err(MmcError::Timeout)
     }
 
-    pub async fn init_idle(&mut self) -> Result<(), MmcError> {
+    pub async fn init_idle(&mut self) -> Result<(), MmcError>
+    where
+        common::Cmd0: ControlCommand<B::Mode>,
+        common::Cmd13: ControlCommand<B::Mode>,
+    {
         // While the SD/SDIO card or eMMC is in identification mode,
         // the SDMMC_CK frequency must be no more than 400 kHz.
         self.bus.init_idle(INIT_FREQ).await?;
@@ -964,7 +985,10 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     ///
     /// If `None` is specifed for `card`, all cards are put back into
     /// _Stand-by State_
-    pub async fn select_card(&mut self, rca: Option<u16>) -> Result<(), MmcError> {
+    pub async fn select_card(&mut self, rca: Option<u16>) -> Result<(), MmcError>
+    where
+        common::Cmd7: ControlCommand<B::Mode>,
+    {
         match self
             .send_command(common::select_card(rca.unwrap_or(0)), false)
             .await
@@ -975,13 +999,13 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     }
 
     /// Get the ocr with the provided command
-    pub async fn get_ocr<'a, C: ControlCommand<Self::Mode> + 'a, Ext>(
+    pub async fn get_ocr<'a, C: ControlCommand<B::Mode> + 'a, Ext>(
         &mut self,
         cmd: &'a C,
         app_cmd: bool,
     ) -> Result<OCR<Ext>, MmcError>
     where
-        OCR<Ext>: From<<C as Command>::Resp<'a>>,
+        OCR<Ext>: From<<C as Command<B::Mode>>::Resp<'a>>,
     {
         // Wait up to 750ms + cmd time for ready after R1b response
         // Note: this is a rather simplistic timeout loop. It can be improved later.
@@ -1002,11 +1026,15 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     /// Send a command that has no data transfer (e.g., CMD0, CMD8, CMD55).
     ///
     /// Provide `Some(rca)` to execute this as an app cmd.
-    pub async fn send_command<'a, C: ControlCommand<Self::Mode> + 'a>(
+    pub async fn send_command<'a, C: ControlCommand<B::Mode> + 'a>(
         &mut self,
         cmd: C,
         app_cmd: bool,
-    ) -> Result<C::Resp<'a>, MmcError> {
+    ) -> Result<C::Resp<'a>, MmcError>
+    where
+        common::Cmd13: ControlCommand<B::Mode>,
+        CardStatus<()>: for<'all> From<<common::Cmd13 as Command<B::Mode>>::Resp<'all>>,
+    {
         self.app_cmd(app_cmd).await?;
         let res = self.bus.send_command(cmd).await?;
         self.wait_if_required::<C::Resp<'a>>().await?;
