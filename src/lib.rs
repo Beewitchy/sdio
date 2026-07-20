@@ -79,6 +79,16 @@ impl ResponseLen {
     }
 }
 
+impl ResponseLenBytes for ResponseLen {
+    fn bytes(&self) -> usize {
+        match self {
+            Self::Zero => 0,
+            Self::R48 => 6,
+            Self::R136 => 17
+        }
+    }
+}
+
 /// ---------------------------------------------------------------------------
 /// Response Trait
 /// ---------------------------------------------------------------------------
@@ -94,6 +104,9 @@ impl ResponseLen {
 ///   CMD9  → R2
 ///
 pub trait Response: Sized {
+    /// An array of words.
+    type Words: ResponseWords;
+
     /// Whether to check the CRC
     const CRC: bool;
 
@@ -101,10 +114,42 @@ pub trait Response: Sized {
     const BUSY: bool;
 
     /// Response length
-    const LEN: ResponseLen;
+    const LEN: <Self::Words as ResponseWords>::Len = <Self::Words as ResponseWords>::LEN;
 
-    /// Parse the reponse from words. Only the `ResponseLen` words are used.
-    fn from_words(buf: &[u32; 4]) -> Self;
+    /// Parse the response from words
+    fn from_words(buf: &Self::Words) -> Self;
+}
+
+pub trait ResponseWords: AsRef<[Self::Word]>
+        + core::ops::Index<usize, Output = Self::Word>
+        + core::ops::Index<core::ops::RangeFull, Output = [Self::Word]> {
+    /// The basic element parsed for the response
+    type Word;
+
+    // Type for LEN.
+    type Len: ResponseLenBytes;
+
+    /// Response length
+    const LEN: Self::Len;
+}
+
+pub trait ResponseLenBytes {
+    fn bytes(&self) -> usize;
+}
+
+/// Marker struct for indicating the SD protocol in commands.
+///
+/// See also [crate::spi::SpiMode].
+pub struct SdMode;
+
+pub trait CommandIndex {
+    /// The fixed command index (e.g., 17 for CMD17).
+    const INDEX: u8;
+
+    /// The fixed command index (e.g., 17 for CMD17).
+    fn index(&self) -> u8 {
+        Self::INDEX
+    }
 }
 
 /// ---------------------------------------------------------------------------
@@ -124,19 +169,11 @@ pub trait Response: Sized {
 ///
 /// No downcasting, no runtime parsing, no mistakes.
 ///
-pub trait Command {
-    /// The fixed command index (e.g., 17 for CMD17).
-    const INDEX: u8;
-
+pub trait Command<Mode>: CommandIndex {
     /// The associated response type for this command.
     type Resp<'a>: Response
     where
         Self: 'a;
-
-    /// The fixed command index (e.g., 17 for CMD17).
-    fn index(&self) -> u8 {
-        Self::INDEX
-    }
 
     /// Compute the 32-bit argument for this command.
     fn arg(&self) -> u32;
@@ -157,7 +194,7 @@ where
 }
 
 /// Block mode: fixed-size blocks (CMD17/18/24/25, CMD53 block mode)
-pub trait BlockCommand: Command {
+pub trait BlockCommand<M>: Command<M> {
     type Block: BlockBuffer;
 
     /// Size of each block in bytes (usually 512 for SD/MMC).
@@ -175,7 +212,7 @@ pub trait BlockCommand: Command {
 }
 
 /// Byte mode: arbitrary byte counts (CMD53 byte mode, SPI multi-byte)
-pub trait ByteCommand: Command {
+pub trait ByteCommand<M>: Command<M> {
     /// Number of bytes to transfer (arbitrary length).
     fn byte_count(&self) -> usize;
 
@@ -184,27 +221,27 @@ pub trait ByteCommand: Command {
 }
 
 /// ControlCommand: commands with no data transfer (CMD0, CMD8, CMD55, etc.)
-pub trait ControlCommand: Command {}
+pub trait ControlCommand<M>: Command<M> {}
 
 /// BlockReadCommand: block-mode read (CMD17, CMD18)
 ///
 /// This is a marker trait to prevent incorrect method calls with these commands.
-pub trait BlockReadCommand: BlockCommand {}
+pub trait BlockReadCommand<M>: BlockCommand<M> {}
 
 /// BlockWriteCommand: block-mode write (CMD24, CMD25)
 ///
 /// This is a marker trait to prevent incorrect method calls with these commands.
-pub trait BlockWriteCommand: BlockCommand {}
+pub trait BlockWriteCommand<M>: BlockCommand<M> {}
 
 /// ByteReadCommand: byte-mode read (CMD53 byte read)
 ///
 /// This is a marker trait to prevent incorrect method calls with these commands.
-pub trait ByteReadCommand: ByteCommand {}
+pub trait ByteReadCommand: ByteCommand<SdMode> {}
 
 /// ByteWriteCommand: byte-mode write (CMD53 byte write)
 ///
 /// This is a marker trait to prevent incorrect method calls with these commands.
-pub trait ByteWriteCommand: ByteCommand {}
+pub trait ByteWriteCommand: ByteCommand<SdMode> {}
 
 /// ---------------------------------------------------------------------------
 /// MmcBus Trait
@@ -225,6 +262,7 @@ pub trait ByteWriteCommand: ByteCommand {}
 /// If hardware support is available, methods should not return until DAT0 goes high
 /// if the associated reponse has `BUSY` set to `true`.
 pub trait MmcBus {
+    type Mode;
     /// Send a command that has no data transfer (e.g., CMD0, CMD8, CMD55).
     ///
     /// If called with `CMD11`, the bus should perform the voltage switch sequence.
@@ -233,7 +271,7 @@ pub trait MmcBus {
         cmd: C,
     ) -> impl Future<Output = Result<C::Resp<'a>, MmcError>>
     where
-        C: ControlCommand + 'a;
+        C: ControlCommand<Self::Mode> + 'a;
 
     /// Read N blocks of fixed size (CMD17, CMD18, CMD53 block mode).
     ///
@@ -244,7 +282,7 @@ pub trait MmcBus {
         auto_stop: bool,
     ) -> impl Future<Output = Result<C::Resp<'a>, MmcError>>
     where
-        C: BlockReadCommand + 'a;
+        C: BlockReadCommand<Self::Mode> + 'a;
 
     /// Write N blocks of fixed size (CMD24, CMD25, CMD53 block mode).
     ///
@@ -255,7 +293,7 @@ pub trait MmcBus {
         auto_stop: bool,
     ) -> impl Future<Output = Result<C::Resp<'a>, MmcError>>
     where
-        C: BlockWriteCommand + 'a;
+        C: BlockWriteCommand<Self::Mode> + 'a;
 
     /// Read an arbitrary number of bytes (CMD53 byte mode, SPI multi-byte).
     fn read_bytes<'a, C>(&mut self, cmd: C) -> impl Future<Output = Result<C::Resp<'a>, MmcError>>
@@ -324,16 +362,18 @@ pub trait MmcBus {
 }
 
 impl<T: MmcBus> MmcBus for &mut T {
+    type Mode = T::Mode;
+
     async fn send_command<'a, C>(&mut self, cmd: C) -> Result<C::Resp<'a>, MmcError>
     where
-        C: ControlCommand + 'a,
+        C: ControlCommand<Self::Mode> + 'a,
     {
         T::send_command(self, cmd).await
     }
 
     async fn read_blocks<'a, C>(&mut self, cmd: C, auto_stop: bool) -> Result<C::Resp<'a>, MmcError>
     where
-        C: BlockReadCommand + 'a,
+        C: BlockReadCommand<Self::Mode> + 'a,
     {
         T::read_blocks(self, cmd, auto_stop).await
     }
@@ -344,7 +384,7 @@ impl<T: MmcBus> MmcBus for &mut T {
         auto_stop: bool,
     ) -> Result<C::Resp<'a>, MmcError>
     where
-        C: BlockWriteCommand + 'a,
+        C: BlockWriteCommand<Self::Mode> + 'a,
     {
         T::write_blocks(self, cmd, auto_stop).await
     }
@@ -403,16 +443,34 @@ impl<T: MmcBus> MmcBus for &mut T {
     }
 }
 
+impl ResponseWords for [(); 0] {
+    type Word = ();
+    type Len = ResponseLen;
+    const LEN: Self::Len = ResponseLen::Zero;
+}
+
+impl ResponseWords for [u32; 1] {
+    type Word = u32;
+    type Len = ResponseLen;
+    const LEN: Self::Len = ResponseLen::R48;
+}
+
+impl ResponseWords for [u32; 4] {
+    type Word = u32;
+    type Len = ResponseLen;
+    const LEN: Self::Len = ResponseLen::R136;
+}
+
 /// R1 — Zero response
 pub struct R0;
 
 impl Response for R0 {
+    type Words = [(); 0];
     const CRC: bool = false;
-    const LEN: ResponseLen = ResponseLen::Zero;
     const BUSY: bool = false;
 
     #[inline]
-    fn from_words(_buf: &[u32; 4]) -> Self {
+    fn from_words(_buf: &Self::Words) -> Self {
         Self
     }
 }
@@ -548,12 +606,12 @@ impl R1 {
 }
 
 impl Response for R1 {
+    type Words = [u32; 1];
     const CRC: bool = true;
-    const LEN: ResponseLen = ResponseLen::R48;
     const BUSY: bool = false;
 
     #[inline]
-    fn from_words(buf: &[u32; 4]) -> Self {
+    fn from_words(buf: &Self::Words) -> Self {
         R1 { status: buf[0] }
     }
 }
@@ -576,12 +634,12 @@ impl R1b {
 }
 
 impl Response for R1b {
+    type Words = [u32; 1];
     const CRC: bool = true;
-    const LEN: ResponseLen = ResponseLen::R48;
     const BUSY: bool = true;
 
     #[inline]
-    fn from_words(buf: &[u32; 4]) -> Self {
+    fn from_words(buf: &Self::Words) -> Self {
         R1b { status: buf[0] }
     }
 }
@@ -594,12 +652,12 @@ pub struct R2 {
 }
 
 impl Response for R2 {
+    type Words = [u32; 4];
     const CRC: bool = true;
-    const LEN: ResponseLen = ResponseLen::R136;
     const BUSY: bool = false;
 
     #[inline]
-    fn from_words(buf: &[u32; 4]) -> Self {
+    fn from_words(buf: &Self::Words) -> Self {
         R2 {
             words: [buf[0], buf[1], buf[2], buf[3]],
         }
@@ -615,12 +673,12 @@ pub struct R3 {
 }
 
 impl Response for R3 {
+    type Words = [u32; 1];
     const CRC: bool = false;
-    const LEN: ResponseLen = ResponseLen::R48;
     const BUSY: bool = false;
 
     #[inline]
-    fn from_words(buf: &[u32; 4]) -> Self {
+    fn from_words(buf: &Self::Words) -> Self {
         R3 { ocr: buf[0] }
     }
 }
@@ -634,12 +692,12 @@ pub struct R6 {
 }
 
 impl Response for R6 {
+    type Words = [u32; 1];
     const CRC: bool = true;
-    const LEN: ResponseLen = ResponseLen::R48;
     const BUSY: bool = false;
 
     #[inline]
-    fn from_words(buf: &[u32; 4]) -> Self {
+    fn from_words(buf: &Self::Words) -> Self {
         let v = buf[0];
         R6 {
             rca: (v >> 16) as u16,
@@ -657,12 +715,12 @@ pub struct R7 {
 }
 
 impl Response for R7 {
+    type Words = [u32; 1];
     const CRC: bool = true;
-    const LEN: ResponseLen = ResponseLen::R48;
     const BUSY: bool = false;
 
     #[inline]
-    fn from_words(buf: &[u32; 4]) -> Self {
+    fn from_words(buf: &Self::Words) -> Self {
         let v = buf[0];
         R7 {
             voltage: ((v >> 8) & 0xF) as u8,
@@ -684,12 +742,12 @@ pub struct R4 {
 }
 
 impl Response for R4 {
+    type Words = [u32; 1];
     const CRC: bool = false;
-    const LEN: ResponseLen = ResponseLen::R48;
     const BUSY: bool = false;
 
     #[inline]
-    fn from_words(buf: &[u32; 4]) -> Self {
+    fn from_words(buf: &Self::Words) -> Self {
         R4 { ocr: buf[0] }
     }
 }
@@ -761,11 +819,11 @@ impl R5 {
 }
 
 impl Response for R5 {
+    type Words = [u32; 1];
     const CRC: bool = true;
-    const LEN: ResponseLen = ResponseLen::R48;
     const BUSY: bool = false;
 
-    fn from_words(buf: &[u32; 4]) -> Self {
+    fn from_words(buf: &Self::Words) -> Self {
         let v = buf[0];
         R5 {
             flags: ((v >> 8) & 0xFF) as u8,
@@ -785,9 +843,16 @@ pub trait TuningOp {
 }
 
 // Allow passing some commands by reference
-impl<T: Command> Command for &T {
-    const INDEX: u8 = T::INDEX;
 
+impl<T: CommandIndex> CommandIndex for &T {
+    const INDEX: u8 = T::INDEX;
+}
+
+impl<T: CommandIndex> CommandIndex for &mut T {
+    const INDEX: u8 = T::INDEX;
+}
+
+impl<T: Command> Command for &T {
     type Resp<'a>
         = T::Resp<'a>
     where
@@ -799,8 +864,6 @@ impl<T: Command> Command for &T {
 }
 
 impl<T: Command> Command for &mut T {
-    const INDEX: u8 = T::INDEX;
-
     type Resp<'a>
         = T::Resp<'a>
     where
@@ -811,9 +874,9 @@ impl<T: Command> Command for &mut T {
     }
 }
 
-impl<T: ControlCommand> ControlCommand for &T {}
+impl<T: ControlCommand<M>, M> ControlCommand<M> for &T {}
 
-impl<T: BlockCommand> BlockCommand for &mut T {
+impl<T: BlockCommand<M>, M> BlockCommand<M> for &mut T {
     type Block = T::Block;
 
     fn block_size() -> BlockSize {
@@ -829,7 +892,7 @@ impl<T: BlockCommand> BlockCommand for &mut T {
     }
 }
 
-impl<T: BlockReadCommand> BlockReadCommand for &mut T {}
+impl<T: BlockReadCommand<M>, M> BlockReadCommand<M> for &mut T {}
 
 /// Bus Adapter that implements common functionality of all bus users
 struct BusAdapter<B: MmcBus, D: DelayNs> {
@@ -892,11 +955,7 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
         // Wait 74 cycles
         self.delay.delay_us(74_000_000 / INIT_FREQ).await;
 
-        if self.bus.supports_mmc() {
-            self.send_command(common::idle(), false).await?;
-        } else {
-            self.send_command(common::idle_spi(), false).await?;
-        }
+        self.send_command(common::idle(), false).await?;
 
         Ok(())
     }
@@ -916,7 +975,7 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     }
 
     /// Get the ocr with the provided command
-    pub async fn get_ocr<'a, C: ControlCommand + 'a, Ext>(
+    pub async fn get_ocr<'a, C: ControlCommand<Self::Mode> + 'a, Ext>(
         &mut self,
         cmd: &'a C,
         app_cmd: bool,
@@ -943,7 +1002,7 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     /// Send a command that has no data transfer (e.g., CMD0, CMD8, CMD55).
     ///
     /// Provide `Some(rca)` to execute this as an app cmd.
-    pub async fn send_command<'a, C: ControlCommand + 'a>(
+    pub async fn send_command<'a, C: ControlCommand<Self::Mode> + 'a>(
         &mut self,
         cmd: C,
         app_cmd: bool,

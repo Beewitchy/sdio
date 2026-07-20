@@ -1,13 +1,13 @@
-use core::marker::PhantomData;
 use core::fmt;
+use core::marker::PhantomData;
 
 use core::fmt::Debug;
 
 use aligned::{A4, Aligned};
 
 use crate::{
-    BlockCommand, BlockReadCommand, BlockWriteCommand, Command, ControlCommand, R0, R1, R1b, R2,
-    R3, R4, R6,
+    BlockCommand, BlockReadCommand, BlockWriteCommand, Command, CommandIndex, ControlCommand, R0, R1, R1b, R2,
+    R3, R4, R6, SdMode, spi
 };
 
 // ============================================================================
@@ -17,14 +17,22 @@ use crate::{
 /// CMD0 — GO_IDLE_STATE
 pub struct Cmd0;
 
-impl Command for Cmd0 {
+impl CommandIndex for Cmd0 {
     const INDEX: u8 = 0;
+}
+impl Command<SdMode> for Cmd0 {
     type Resp<'a> = R0;
     fn arg(&self) -> u32 {
         0
     }
 }
-impl ControlCommand for Cmd0 {}
+impl Command<spi::SpiMode> for Cmd0 {
+    type Resp<'a> = spi::R1;
+    fn arg(&self) -> u32 {
+        0
+    }
+}
+impl<M> ControlCommand<M> for Cmd0 {}
 
 /// CMD0 — GO_IDLE_STATE
 pub fn idle() -> Cmd0 {
@@ -33,35 +41,18 @@ pub fn idle() -> Cmd0 {
 
 pub type Idle = Cmd0;
 
-/// CMD0 — GO_IDLE_STATE (SPI)
-pub struct Cmd0S;
-
-impl Command for Cmd0S {
-    const INDEX: u8 = 0;
-    type Resp<'a> = R1;
-    fn arg(&self) -> u32 {
-        0
-    }
-}
-impl ControlCommand for Cmd0S {}
-
-/// CMD0 — GO_IDLE_STATE
-pub fn idle_spi() -> Cmd0S {
-    Cmd0S
-}
-
-pub type IdleSpi = Cmd0S;
-
 /// CMD2 — ALL_SEND_CID
 pub struct Cmd2;
-impl Command for Cmd2 {
+impl CommandIndex for Cmd2 {
     const INDEX: u8 = 2;
+}
+impl Command<SdMode> for Cmd2 {
     type Resp<'a> = R2;
     fn arg(&self) -> u32 {
         0
     }
 }
-impl ControlCommand for Cmd2 {}
+impl<M> ControlCommand<M> for Cmd2 {}
 
 /// CMD2: Ask any card to send their CID
 pub fn all_send_cid() -> Cmd2 {
@@ -74,14 +65,16 @@ pub type AllSendCid = Cmd2;
 pub struct Cmd7 {
     pub rca: u16,
 }
-impl Command for Cmd7 {
+impl CommandIndex for Cmd7 {
     const INDEX: u8 = 7;
+}
+impl Command<SdMode> for Cmd7 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         (self.rca as u32) << 16
     }
 }
-impl ControlCommand for Cmd7 {}
+impl<M> ControlCommand<M> for Cmd7 {}
 
 /// CMD7: Select or deselect card
 pub fn select_card(rca: u16) -> Cmd7 {
@@ -92,14 +85,22 @@ pub fn select_card(rca: u16) -> Cmd7 {
 pub struct Cmd9 {
     pub rca: u16,
 }
-impl Command for Cmd9 {
+impl CommandIndex for Cmd9 {
     const INDEX: u8 = 9;
+}
+impl Command<SdMode> for Cmd9 {
     type Resp<'a> = R2;
     fn arg(&self) -> u32 {
         (self.rca as u32) << 16
     }
 }
-impl ControlCommand for Cmd9 {}
+impl Command<spi::SpiMode> for Cmd9 {
+    type Resp<'a> = spi::R1;
+    fn arg(&self) -> u32 {
+        0
+    }
+}
+impl<M> ControlCommand<M> for Cmd9 {}
 
 /// CMD9: Send CSD
 pub fn send_csd(rca: u16) -> Cmd9 {
@@ -110,14 +111,22 @@ pub fn send_csd(rca: u16) -> Cmd9 {
 pub struct Cmd10 {
     pub rca: u16,
 }
-impl Command for Cmd10 {
+impl CommandIndex for Cmd10 {
     const INDEX: u8 = 10;
+}
+impl Command<SdMode> for Cmd10 {
     type Resp<'a> = R2;
     fn arg(&self) -> u32 {
         (self.rca as u32) << 16
     }
 }
-impl ControlCommand for Cmd10 {}
+impl Command<spi::SpiMode> for Cmd10 {
+    type Resp<'a> = spi::R1;
+    fn arg(&self) -> u32 {
+        0
+    }
+}
+impl<M> ControlCommand<M> for Cmd10 {}
 
 /// CMD10: Send CID
 pub fn send_cid(rca: u16) -> Cmd10 {
@@ -126,14 +135,22 @@ pub fn send_cid(rca: u16) -> Cmd10 {
 
 /// CMD12 — STOP_TRANSMISSION (R1b)
 pub struct Cmd12;
-impl Command for Cmd12 {
+impl CommandIndex for Cmd12 {
     const INDEX: u8 = 12;
+}
+impl Command<SdMode> for Cmd12 {
     type Resp<'a> = R1b;
     fn arg(&self) -> u32 {
         0
     }
 }
-impl ControlCommand for Cmd12 {}
+impl Command<spi::SpiMode> for Cmd12 {
+    type Resp<'a> = R1b;
+    fn arg(&self) -> u32 {
+        0
+    }
+}
+impl<M> ControlCommand<M> for Cmd12 {}
 
 /// CMD12: Stop transmission
 pub fn stop_transmission() -> Cmd12 {
@@ -147,19 +164,29 @@ pub struct Cmd13 {
     pub rca: u16,
     pub task_status: bool,
 }
-impl Command for Cmd13 {
+impl CommandIndex for Cmd13 {
     const INDEX: u8 = 13;
+}
+impl Command<SdMode> for Cmd13 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         (self.rca as u32) << 16 | (self.task_status as u32) << 15
     }
 }
-impl ControlCommand for Cmd13 {}
+impl Command<spi::SpiMode> for Cmd13 {
+    type Resp<'a> = spi::R2;
+    fn arg(&self) -> u32 {
+        0
+    }
+}
+impl<M> ControlCommand<M> for Cmd13 {}
 
 /// CMD13: Ask card to send status or task status
 pub fn card_status(rca: u16, task_status: bool) -> Cmd13 {
     Cmd13 { rca, task_status }
 }
+
+pub type SendStatus = Cmd13;
 
 // /// CMD15: Sends card to inactive state
 // pub fn go_inactive_state(rca: u16) -> Cmd<Rz> {
@@ -217,7 +244,10 @@ pub fn read_single_block<const BLOCK_SIZE: usize>(
     addr: u32,
     buf: &mut Aligned<A4, [u8; BLOCK_SIZE]>,
 ) -> Cmd17<'_, BLOCK_SIZE> {
-    Cmd17 { addr, buf: core::slice::from_mut(buf) }
+    Cmd17 {
+        addr,
+        buf: core::slice::from_mut(buf),
+    }
 }
 
 /// CMD18 — READ_MULTIPLE_BLOCK
@@ -244,8 +274,7 @@ impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd18<'a, BLOCK_SIZE> {
         self.buf
     }
 }
-impl<'a, const BLOCK_SIZE: usize> BlockReadCommand for Cmd18<'a, BLOCK_SIZE> {
-}
+impl<'a, const BLOCK_SIZE: usize> BlockReadCommand for Cmd18<'a, BLOCK_SIZE> {}
 
 /// CMD18: Read multiple block from the card
 pub fn read_multiple_blocks<const BLOCK_SIZE: usize>(
@@ -287,7 +316,10 @@ pub fn write_single_block<const BLOCK_SIZE: usize>(
     addr: u32,
     buf: &mut Aligned<A4, [u8; BLOCK_SIZE]>,
 ) -> Cmd24<'_, BLOCK_SIZE> {
-    Cmd24 { addr, buf: core::slice::from_mut(buf) }
+    Cmd24 {
+        addr,
+        buf: core::slice::from_mut(buf),
+    }
 }
 
 /// CMD25 — WRITE_MULTIPLE_BLOCK
@@ -315,8 +347,7 @@ impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd25<'a, BLOCK_SIZE> {
         self.buf
     }
 }
-impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd25<'a, BLOCK_SIZE> {
-}
+impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd25<'a, BLOCK_SIZE> {}
 
 /// CMD25: Write multiple blocks
 pub fn write_multiple_blocks<const BLOCK_SIZE: usize>(

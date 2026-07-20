@@ -3,9 +3,37 @@ use embedded_hal_async::delay::DelayNs;
 use embedded_hal_async::spi::SpiBus;
 
 use crate::{
-    BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand, ByteWriteCommand, Command,
-    ControlCommand, MmcBus, MmcError, Response, ResponseLen, R1,
+    BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand, ByteWriteCommand, Command, CommandIndex, ControlCommand, ResponseLenBytes, MmcBus, MmcError, Response, ResponseWords
 };
+
+/// Marker trait for commands in SPI mode
+///
+/// See also [crate::SdMode].
+pub struct SpiMode;
+
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum SpiResponseLen {
+    R8,
+    R16,
+    R40,
+}
+
+impl SpiResponseLen {
+    pub const fn bytes(&self) -> usize {
+        match self {
+            Self::R8 => 1,
+            Self::R16 => 2,
+            Self::R40 => 5,
+        }
+    }
+}
+
+impl ResponseLenBytes for SpiResponseLen {
+    fn bytes(&self) -> usize {
+        self.bytes()
+    }
+}
 
 /// CRC_ON_OFF for SPI mode
 ///
@@ -21,8 +49,10 @@ pub enum Cmd59 {
     Off,
 }
 
-impl Command for Cmd59 {
+impl CommandIndex for Cmd59 {
     const INDEX: u8 = 59;
+}
+impl Command<SpiMode> for Cmd59 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         match self {
@@ -31,9 +61,103 @@ impl Command for Cmd59 {
         }
     }
 }
-impl ControlCommand for Cmd59 {}
+impl ControlCommand<SpiMode> for Cmd59 {}
 
 pub type CrcOnOff = Cmd59;
+
+impl ResponseWords for [u8; 1] {
+    type Word = u8;
+    type Len = SpiResponseLen;
+
+    const LEN: Self::Len = SpiResponseLen::R8;
+}
+
+impl ResponseWords for [u8; 2] {
+    type Word = u8;
+    type Len = SpiResponseLen;
+
+    const LEN: Self::Len = SpiResponseLen::R16;
+}
+
+impl ResponseWords for [u8; 5] {
+    type Word = u8;
+    type Len = SpiResponseLen;
+
+    const LEN: Self::Len = SpiResponseLen::R40;
+}
+
+/// R1 — Normal status response
+///
+/// 8-bit, CRC-checked, no busy
+pub struct R1 {
+    pub status: u8,
+}
+
+impl Response for R1 {
+    type Words = [u8; 1];
+
+    const CRC: bool = true;
+    const BUSY: bool = false;
+
+    fn from_words(buf: &Self::Words) -> Self {
+        Self { status: buf[0] }
+    }
+}
+
+/// R1b — R1 + busy on DAT0
+///
+/// 8-bit, CRC-checked, *busy*
+/// Card holds DAT0 low until internal operation completes.
+pub struct R1b {
+    pub status: u8,
+}
+
+impl Response for R1b {
+    type Words = [u8; 1];
+
+    const CRC: bool = true;
+    const BUSY: bool = false;
+
+    fn from_words(buf: &Self::Words) -> Self {
+        Self { status: buf[0] }
+    }
+}
+
+/// R2 — Send Status response
+///
+/// 16-bit, CRC-checked
+pub struct R2 {
+    pub bytes: [u8; 2]
+}
+
+impl Response for R2 {
+    type Words = [u8; 2];
+
+    const CRC: bool = true;
+    const BUSY: bool = false;
+
+    fn from_words(buf: &Self::Words) -> Self {
+        Self { bytes: *buf }
+    }
+}
+
+/// R7 — Send Status response
+///
+/// 40-bit, CRC-checked
+pub struct R7 {
+    pub bytes: [u8; 5],
+}
+
+impl Response for R7 {
+    type Words = [u8; 5];
+
+    const CRC: bool = true;
+    const BUSY: bool = false;
+
+    fn from_words(buf: &Self::Words) -> Self {
+        Self { bytes: *buf }
+    }
+}
 
 pub trait SetHz {
     fn set_hz(&mut self, hz: u32);
@@ -82,7 +206,7 @@ impl<SPI, CS, DLY> SpiMmcBus<SPI, CS, DLY> {
         Ok(())
     }
 
-    async fn send_cmd_header<C: Command>(&mut self, cmd: &C) -> Result<(), MmcError>
+    async fn send_cmd_header<C: Command<SpiMode>>(&mut self, cmd: &C) -> Result<(), MmcError>
     where
         SPI: SpiBus<u8>,
         CS: OutputPin,
@@ -139,11 +263,7 @@ impl<SPI, CS, DLY> SpiMmcBus<SPI, CS, DLY> {
     {
         let r1 = self.read_r1().await?;
 
-        let total_bytes = match R::LEN {
-            ResponseLen::Zero => 0,
-            ResponseLen::R48 => 5,
-            ResponseLen::R136 => 16,
-        };
+        let total_bytes = <R::Words as ResponseWords>::LEN.into();
 
         let mut raw = [0u8; 1 + 16];
         raw[0] = r1;
@@ -229,9 +349,11 @@ where
     CS: OutputPin,
     DLY: DelayNs,
 {
+    type Mode = SpiMode;
+
     async fn send_command<'a, C>(&mut self, cmd: C) -> Result<C::Resp<'a>, MmcError>
     where
-        C: ControlCommand + 'a,
+        C: ControlCommand<Self::Mode> + 'a,
     {
         self.send_cmd_header(&cmd).await?;
         let resp = self.read_response_words::<C::Resp<'_>>().await?;
@@ -245,7 +367,7 @@ where
         auto_stop: bool,
     ) -> Result<C::Resp<'a>, MmcError>
     where
-        C: BlockReadCommand + 'a,
+        C: BlockReadCommand<Self::Mode> + 'a,
     {
         if auto_stop {
             return Err(MmcError::Unsupported);
@@ -271,7 +393,7 @@ where
         auto_stop: bool,
     ) -> Result<C::Resp<'a>, MmcError>
     where
-        C: BlockWriteCommand + 'a,
+        C: BlockWriteCommand<Self::Mode> + 'a,
     {
         if auto_stop {
             return Err(MmcError::Unsupported);
