@@ -9,11 +9,12 @@ for this include [embedded-fatfs][1] and [exfat-slim][2].
 
 ## Changes in this fork
 
-This fork adds additional marker structs to distinguish command behavior between SD and SPI bus mode. In SPI mode, 
+This fork adds additional marker types to distinguish command behavior between SD and SPI bus mode. In SPI mode, 
 there is a more limited subset of commands and the responses are significantly simplified compared to their SD
-mode counterparts. What this is allows is, instead of branching at runtime for the variations of each command,
-the SD and SPI mode implementations of each command diverge based on the type of the `MmcBus` implementation they
-are being used with. 
+mode counterparts. In this fork what the new marker types allow is for the SD and SPI mode implementations of 
+each command diverge based on the type of the `MmcBus` implementation they are being used with. This makes
+the command implementations quite a bit more complicated, but offers an addtional level of type safety at the
+bus implementation level which I have found very helpful in my own use case.
 
 ## Definitions
 
