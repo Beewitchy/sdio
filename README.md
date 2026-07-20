@@ -7,6 +7,14 @@ A struct within this crate implements `block_device_driver::BlockDevice`, which 
 cards that are attached to peripherals that implement `MmcBus`. Currently known file systems that implement support
 for this include [embedded-fatfs][1] and [exfat-slim][2].
 
+## Changes in this fork
+
+This fork adds additional marker structs to distinguish command behavior between SD and SPI bus mode. In SPI mode, 
+there is a more limited subset of commands and the responses are significantly simplified compared to their SD
+mode counterparts. What this is allows is, instead of branching at runtime for the variations of each command,
+the SD and SPI mode implementations of each command diverge based on the type of the `MmcBus` implementation they
+are being used with. 
+
 ## Definitions
 
 - **sdio**: A transport protocol that allows streaming data to wifi, bluetooth, and other similar devices.
