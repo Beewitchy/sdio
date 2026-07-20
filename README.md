@@ -14,7 +14,7 @@ there is a more limited subset of commands and the responses are significantly s
 mode counterparts. In this fork what the new marker types allow is for the SD and SPI mode implementations of 
 each command diverge based on the type of the `MmcBus` implementation they are being used with. This makes
 the command implementations quite a bit more complicated, but offers an addtional level of type safety at the
-bus implementation level which I have found very helpful in my own use case.
+bus implementation level which I have found very helpful when implementing the bus types myself.
 
 ## Definitions
 
