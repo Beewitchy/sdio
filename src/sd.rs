@@ -5,8 +5,9 @@ use embedded_hal_async::delay::DelayNs;
 
 pub use crate::common::*;
 use crate::{
-    Acquirable, Addressable, BlockCommand, BlockDevice, BlockReadCommand, BusAdapter, BusWidth,
-    Command, ControlCommand, MmcBus, MmcError, R1, R3, R6, R7, Signalling, TuningOp, common, sd,
+    Acquirable, Addressable, AddressableBlockDevice, BlockCommand, BlockDevice, BlockReadCommand,
+    BusAdapter, BusWidth, Command, CommandIndex, ControlCommand, MmcBus, MmcError, R1, R3, R6, R7,
+    Response as _, SdMode, Signalling, TuningOp, common, sd, spi,
 };
 
 /// Type marker for SD-specific extensions.
@@ -21,14 +22,16 @@ use core::{convert::TryInto, fmt, str};
 
 /// CMD3 — SEND_RELATIVE_ADDR (RCA)
 pub struct Cmd3;
-impl Command for Cmd3 {
+impl CommandIndex for Cmd3 {
     const INDEX: u8 = 3;
+}
+impl Command<SdMode> for Cmd3 {
     type Resp<'a> = R6;
     fn arg(&self) -> u32 {
         0
     }
 }
-impl ControlCommand for Cmd3 {}
+impl<M> ControlCommand<M> for Cmd3 where Self: Command<M> {}
 
 /// CMD3 — SEND_RELATIVE_ADDR (RCA)
 pub fn send_relative_address() -> Cmd3 {
@@ -40,8 +43,10 @@ pub struct Cmd6<'a> {
     pub arg: u32,
     pub buf: &'a mut Aligned<A4, [u8; 64]>,
 }
-impl<'a> Command for Cmd6<'a> {
+impl CommandIndex for Cmd6<'_> {
     const INDEX: u8 = 6;
+}
+impl<'a> Command<SdMode> for Cmd6<'a> {
     type Resp<'b>
         = R1
     where
@@ -50,7 +55,19 @@ impl<'a> Command for Cmd6<'a> {
         self.arg
     }
 }
-impl<'a> BlockCommand for Cmd6<'a> {
+impl<'a> Command<spi::SpiMode> for Cmd6<'a> {
+    type Resp<'b>
+        = spi::R1
+    where
+        Self: 'b;
+    fn arg(&self) -> u32 {
+        self.arg
+    }
+}
+impl<'a, M> BlockCommand<M> for Cmd6<'a>
+where
+    Self: Command<M>,
+{
     type Block = Aligned<A4, [u8; 64]>;
 
     fn block_count(&self) -> u32 {
@@ -62,9 +79,7 @@ impl<'a> BlockCommand for Cmd6<'a> {
     }
 }
 
-impl<'a> BlockReadCommand for Cmd6<'a> {
-
-}
+impl<'a, M> BlockReadCommand<M> for Cmd6<'a> where Self: Command<M> {}
 
 /// CMD6 — SWITCH_FUNCTION
 pub fn cmd6(arg: u32, buf: &mut Aligned<A4, [u8; 64]>) -> Cmd6<'_> {
@@ -76,14 +91,22 @@ pub struct Cmd8 {
     pub voltage: u8,
     pub checkpattern: u8,
 }
-impl Command for Cmd8 {
+impl CommandIndex for Cmd8 {
     const INDEX: u8 = 8;
+}
+impl Command<SdMode> for Cmd8 {
     type Resp<'a> = R7;
     fn arg(&self) -> u32 {
         ((self.voltage as u32 & 0xF) << 8) | (self.checkpattern as u32)
     }
 }
-impl ControlCommand for Cmd8 {}
+impl Command<spi::SpiMode> for Cmd8 {
+    type Resp<'a> = spi::R7;
+    fn arg(&self) -> u32 {
+        ((self.voltage as u32 & 0xF) << 8) | (self.checkpattern as u32)
+    }
+}
+impl<M> ControlCommand<M> for Cmd8 where Self: Command<M> {}
 
 /// CMD8 — SEND_IF_COND
 pub fn send_if_cond(voltage: u8, checkpattern: u8) -> Cmd8 {
@@ -95,14 +118,16 @@ pub fn send_if_cond(voltage: u8, checkpattern: u8) -> Cmd8 {
 
 /// CMD11 — VOLTAGE_SWITCH
 pub struct Cmd11;
-impl Command for Cmd11 {
+impl CommandIndex for Cmd11 {
     const INDEX: u8 = 11;
+}
+impl Command<SdMode> for Cmd11 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         0
     }
 }
-impl ControlCommand for Cmd11 {}
+impl<M> ControlCommand<M> for Cmd11 where Self: Command<M> {}
 
 /// CMD11 — VOLTAGE_SWITCH
 pub fn voltage_switch() -> Cmd11 {
@@ -114,8 +139,10 @@ pub struct Cmd19<'b> {
     pub addr: u32,
     pub buf: &'b mut Aligned<A4, [u8; 64]>,
 }
-impl<'b> Command for Cmd19<'b> {
+impl CommandIndex for Cmd19<'_> {
     const INDEX: u8 = 19;
+}
+impl<'b> Command<SdMode> for Cmd19<'b> {
     type Resp<'a>
         = R1
     where
@@ -124,7 +151,10 @@ impl<'b> Command for Cmd19<'b> {
         self.addr
     }
 }
-impl<'a> BlockCommand for Cmd19<'a> {
+impl<'a, M> BlockCommand<M> for Cmd19<'a>
+where
+    Self: Command<M>,
+{
     type Block = Aligned<A4, [u8; 64]>;
 
     fn block_count(&self) -> u32 {
@@ -136,11 +166,10 @@ impl<'a> BlockCommand for Cmd19<'a> {
     }
 }
 
-impl<'a> BlockReadCommand for Cmd19<'a> {
-}
+impl<'a, M> BlockReadCommand<M> for Cmd19<'a> where Self: Command<M> {}
 
 impl<'a> TuningOp for Cmd19<'a> {
-    async fn exec<B: MmcBus>(&mut self, bus: &mut B) -> Result<bool, MmcError> {
+    async fn exec<B: MmcBus<Mode = SdMode>>(&mut self, bus: &mut B) -> Result<bool, MmcError> {
         // The official 64-byte SD 4-bit tuning pattern (SD Physical Layer spec
         // §4.2.4.5, == Linux `tuning_blk_pattern_4bit`). CMD19 tuning runs in the
         // active bus width, which is 4-bit here.
@@ -169,14 +198,16 @@ pub fn send_tuning_block(addr: u32, buf: &mut Aligned<A4, [u8; 64]>) -> Cmd19<'_
 pub struct Cmd20 {
     pub arg: u32,
 }
-impl Command for Cmd20 {
+impl CommandIndex for Cmd20 {
     const INDEX: u8 = 20;
+}
+impl Command<SdMode> for Cmd20 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         self.arg
     }
 }
-impl ControlCommand for Cmd20 {}
+impl<M> ControlCommand<M> for Cmd20 where Self: Command<M> {}
 
 /// CMD20 — SPEED_CLASS_CONTROL
 pub fn speed_class_control(arg: u32) -> Cmd20 {
@@ -187,14 +218,16 @@ pub fn speed_class_control(arg: u32) -> Cmd20 {
 pub struct Cmd22 {
     pub arg: u32,
 }
-impl Command for Cmd22 {
+impl CommandIndex for Cmd22 {
     const INDEX: u8 = 22;
+}
+impl Command<SdMode> for Cmd22 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         self.arg
     }
 }
-impl ControlCommand for Cmd22 {}
+impl<M> ControlCommand<M> for Cmd22 where Self: Command<M> {}
 
 /// CMD22 — ADDRESS_EXTENSION
 pub fn address_extension(arg: u32) -> Cmd22 {
@@ -205,14 +238,22 @@ pub fn address_extension(arg: u32) -> Cmd22 {
 pub struct Cmd23 {
     pub blockcount: u32,
 }
-impl Command for Cmd23 {
+impl CommandIndex for Cmd23 {
     const INDEX: u8 = 23;
+}
+impl Command<SdMode> for Cmd23 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         self.blockcount
     }
 }
-impl ControlCommand for Cmd23 {}
+impl Command<spi::SpiMode> for Cmd23 {
+    type Resp<'a> = spi::R1;
+    fn arg(&self) -> u32 {
+        self.blockcount
+    }
+}
+impl<M> ControlCommand<M> for Cmd23 where Self: Command<M> {}
 
 /// CMD23 — SET_BLOCK_COUNT
 pub fn set_block_count(blockcount: u32) -> Cmd23 {
@@ -223,14 +264,22 @@ pub fn set_block_count(blockcount: u32) -> Cmd23 {
 pub struct Cmd32 {
     pub address: u32,
 }
-impl Command for Cmd32 {
+impl CommandIndex for Cmd32 {
     const INDEX: u8 = 32;
+}
+impl Command<SdMode> for Cmd32 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         self.address
     }
 }
-impl ControlCommand for Cmd32 {}
+impl Command<spi::SpiMode> for Cmd32 {
+    type Resp<'a> = spi::R1;
+    fn arg(&self) -> u32 {
+        self.address
+    }
+}
+impl<M> ControlCommand<M> for Cmd32 where Self: Command<M> {}
 
 /// CMD32 — ERASE_WR_BLK_START_ADDR
 pub fn erase_wr_blk_start_addr(address: u32) -> Cmd32 {
@@ -241,14 +290,22 @@ pub fn erase_wr_blk_start_addr(address: u32) -> Cmd32 {
 pub struct Cmd33 {
     pub address: u32,
 }
-impl Command for Cmd33 {
+impl CommandIndex for Cmd33 {
     const INDEX: u8 = 33;
+}
+impl Command<SdMode> for Cmd33 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         self.address
     }
 }
-impl ControlCommand for Cmd33 {}
+impl Command<spi::SpiMode> for Cmd33 {
+    type Resp<'a> = spi::R1;
+    fn arg(&self) -> u32 {
+        self.address
+    }
+}
+impl<M> ControlCommand<M> for Cmd33 where Self: Command<M> {}
 
 /// CMD33 — ERASE_WR_BLK_END_ADDR
 pub fn erase_wr_blk_end_addr(address: u32) -> Cmd33 {
@@ -259,14 +316,22 @@ pub fn erase_wr_blk_end_addr(address: u32) -> Cmd33 {
 pub struct Cmd36 {
     pub address: u32,
 }
-impl Command for Cmd36 {
+impl CommandIndex for Cmd36 {
     const INDEX: u8 = 36;
+}
+impl Command<SdMode> for Cmd36 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         self.address
     }
 }
-impl ControlCommand for Cmd36 {}
+impl Command<spi::SpiMode> for Cmd36 {
+    type Resp<'a> = spi::R1;
+    fn arg(&self) -> u32 {
+        self.address
+    }
+}
+impl<M> ControlCommand<M> for Cmd36 where Self: Command<M> {}
 
 /// CMD36: Sets the address of the last erase group within a continuous range to
 /// be selected for erase
@@ -278,14 +343,22 @@ pub fn erase_group_end(address: u32) -> Cmd36 {
 
 /// CMD58 — READ_OCR
 pub struct Cmd58;
-impl Command for Cmd58 {
+impl CommandIndex for Cmd58 {
     const INDEX: u8 = 58;
+}
+impl Command<SdMode> for Cmd58 {
     type Resp<'a> = R3;
     fn arg(&self) -> u32 {
         0
     }
 }
-impl ControlCommand for Cmd58 {}
+impl Command<spi::SpiMode> for Cmd58 {
+    type Resp<'a> = spi::R3;
+    fn arg(&self) -> u32 {
+        0
+    }
+}
+impl<M> ControlCommand<M> for Cmd58 where Self: Command<M> {}
 
 pub fn read_ocr() -> Cmd58 {
     Cmd58
@@ -299,14 +372,16 @@ pub fn read_ocr() -> Cmd58 {
 pub struct Acmd6 {
     pub bw4bit: bool,
 }
-impl Command for Acmd6 {
+impl CommandIndex for Acmd6 {
     const INDEX: u8 = 6;
+}
+impl Command<SdMode> for Acmd6 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         if self.bw4bit { 0b10 } else { 0b00 }
     }
 }
-impl ControlCommand for Acmd6 {}
+impl<M> ControlCommand<M> for Acmd6 where Self: Command<M> {}
 
 /// ACMD6 — SET_BUS_WIDTH
 pub fn set_bus_width(bw4bit: bool) -> Acmd6 {
@@ -317,8 +392,10 @@ pub fn set_bus_width(bw4bit: bool) -> Acmd6 {
 pub struct Acmd13<'a> {
     pub buf: &'a mut Aligned<A4, [u8; 64]>,
 }
-impl<'a> Command for Acmd13<'a> {
+impl<'a> CommandIndex for Acmd13<'a> {
     const INDEX: u8 = 13;
+}
+impl<'a> Command<SdMode> for Acmd13<'a> {
     type Resp<'b>
         = R1
     where
@@ -327,7 +404,19 @@ impl<'a> Command for Acmd13<'a> {
         0
     }
 }
-impl<'a> BlockCommand for Acmd13<'a> {
+impl<'a> Command<spi::SpiMode> for Acmd13<'a> {
+    type Resp<'b>
+        = spi::R2
+    where
+        Self: 'b;
+    fn arg(&self) -> u32 {
+        0
+    }
+}
+impl<'a, M> BlockCommand<M> for Acmd13<'a>
+where
+    Self: Command<M>,
+{
     type Block = Aligned<A4, [u8; 64]>;
 
     fn block_count(&self) -> u32 {
@@ -338,8 +427,7 @@ impl<'a> BlockCommand for Acmd13<'a> {
         core::slice::from_mut(self.buf)
     }
 }
-impl<'a> BlockReadCommand for Acmd13<'a> {
-}
+impl<'a, M> BlockReadCommand<M> for Acmd13<'a> where Self: Command<M> {}
 
 /// ACMD13: SD Status
 pub fn sd_status(status: &mut SDStatus) -> Acmd13<'_> {
@@ -352,15 +440,24 @@ pub fn sd_status(status: &mut SDStatus) -> Acmd13<'_> {
 pub struct Acmd23 {
     pub block_count: u32,
 }
-impl Command for Acmd23 {
+impl CommandIndex for Acmd23 {
     const INDEX: u8 = 23;
+}
+impl Command<SdMode> for Acmd23 {
     type Resp<'a> = R1;
     fn arg(&self) -> u32 {
         // Number of write blocks to be pre-erased is a 23-bit field [22:0].
         self.block_count & 0x7F_FFFF
     }
 }
-impl ControlCommand for Acmd23 {}
+impl Command<spi::SpiMode> for Acmd23 {
+    type Resp<'a> = spi::R1;
+    fn arg(&self) -> u32 {
+        // Number of write blocks to be pre-erased is a 23-bit field [22:0].
+        self.block_count & 0x7F_FFFF
+    }
+}
+impl<M> ControlCommand<M> for Acmd23 where Self: Command<M> {}
 
 /// ACMD23 — SET_WR_BLK_ERASE_COUNT: set the number of write blocks to be
 /// pre-erased before the next multi-block write, to speed up the write.
@@ -375,8 +472,10 @@ pub struct Acmd41 {
     pub switch_to_1_8v_request: bool,
     pub voltage_window: u16,
 }
-impl Command for Acmd41 {
+impl CommandIndex for Acmd41 {
     const INDEX: u8 = 41;
+}
+impl Command<SdMode> for Acmd41 {
     type Resp<'a> = R3;
     fn arg(&self) -> u32 {
         (u32::from(self.host_high_capacity_support) << 30)
@@ -385,7 +484,13 @@ impl Command for Acmd41 {
             | ((self.voltage_window as u32 & 0x1FF) << 15)
     }
 }
-impl ControlCommand for Acmd41 {}
+impl Command<spi::SpiMode> for Acmd41 {
+    type Resp<'a> = spi::R1;
+    fn arg(&self) -> u32 {
+        u32::from(self.host_high_capacity_support) << 30
+    }
+}
+impl<M> ControlCommand<M> for Acmd41 where Self: Command<M> {}
 
 /// ACMD41 — SD_SEND_OP_COND
 pub fn sd_send_op_cond(
@@ -406,8 +511,10 @@ pub fn sd_send_op_cond(
 pub struct Acmd51<'a> {
     pub inner: &'a mut Aligned<A4, [u8; 8]>,
 }
-impl<'a> Command for Acmd51<'a> {
+impl<'a> CommandIndex for Acmd51<'a> {
     const INDEX: u8 = 51;
+}
+impl<'a> Command<SdMode> for Acmd51<'a> {
     type Resp<'b>
         = R1
     where
@@ -416,8 +523,20 @@ impl<'a> Command for Acmd51<'a> {
         0
     }
 }
-impl<'a> BlockCommand for Acmd51<'a> {
-type Block = Aligned<A4, [u8; 8]>;
+impl<'a> Command<spi::SpiMode> for Acmd51<'a> {
+    type Resp<'b>
+        = spi::R1
+    where
+        Self: 'b;
+    fn arg(&self) -> u32 {
+        0
+    }
+}
+impl<'a, M> BlockCommand<M> for Acmd51<'a>
+where
+    Self: Command<M>,
+{
+    type Block = Aligned<A4, [u8; 8]>;
 
     fn block_count(&self) -> u32 {
         1
@@ -427,8 +546,7 @@ type Block = Aligned<A4, [u8; 8]>;
         core::slice::from_mut(self.inner)
     }
 }
-impl<'a> BlockReadCommand for Acmd51<'a> {
-}
+impl<'a, M> BlockReadCommand<M> for Acmd51<'a> where Self: Command<M> {}
 
 /// ACMD51: Reads the SCR
 pub fn send_scr(scr: &mut SCR) -> Acmd51<'_> {
@@ -780,22 +898,22 @@ impl fmt::Debug for CSD<SD> {
     }
 }
 
-impl CardStatus<SD> {
+impl CardStatusRegister<SD> {
     /// Command was executed without internal ECC
     pub fn ecc_disabled(&self) -> bool {
-        self.0 & 0x4000 != 0
+        self.0 & Self::CARD_ECC_DISABLED != 0
     }
     /// Extension function specific status
     pub fn fx_event(&self) -> bool {
-        self.0 & 0x40 != 0
+        self.0 & Self::FX_EVENT != 0
     }
     /// Authentication sequence error
     pub fn ake_seq_error(&self) -> bool {
-        self.0 & 0x8 != 0
+        self.0 & Self::AKE_SEQ_ERROR != 0
     }
 }
 
-impl fmt::Debug for CardStatus<SD> {
+impl fmt::Debug for CardStatusRegister<SD> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Card Status")
             .field("Out of range error", &self.out_of_range())
@@ -956,9 +1074,6 @@ impl fmt::Debug for SDStatus {
     }
 }
 
-/// Card interface condition (R7)
-pub type CIC = R7;
-
 impl RCA<SD> {
     /// Status
     pub fn status(&self) -> u16 {
@@ -981,9 +1096,10 @@ pub struct Card {
     pub status: SDStatus,
 }
 
-impl Addressable for Card {
-    type Ext = SD;
-
+impl<Mode> Addressable<Mode> for Card
+where
+    Card: Acquirable<Mode>,
+{
     /// Is this a standard or high capacity peripheral?
     fn get_capacity(&self) -> CardCapacity {
         if self.ocr.high_capacity() {
@@ -1006,8 +1122,13 @@ impl Addressable for Card {
     }
 }
 
-impl Acquirable for Card {
-    async fn acquire<B: MmcBus, D: DelayNs>(
+impl Acquirable<SdMode> for Card
+where
+    for<'all> <common::Cmd13 as Command<SdMode>>::Resp<'all>: CardStatus,
+{
+    type Ext = SD;
+    type SendOpCond = Acmd41;
+    async fn acquire<B: MmcBus<Mode = SdMode>, D: DelayNs>(
         bus: &mut BusAdapter<B, D>,
         block_size: BlockSize,
         bus_width: BusWidth,
@@ -1020,6 +1141,9 @@ impl Acquirable for Card {
             return Err(MmcError::BusWidth);
         }
 
+        /// Card interface condition (R7)
+        pub type CIC = R7;
+
         // CMD8 — check voltage + pattern
         let cic: CIC = bus.send_command(send_if_cond(1, 0xAA), false).await?;
         if cic.check_pattern != 0xAA || (cic.voltage & 1) == 0 {
@@ -1028,19 +1152,12 @@ impl Acquirable for Card {
 
         // ACMD41 — negotiate OCR (with S18A if host supports 1.8V)
         this.ocr = bus
-            .get_ocr(
+            .get_ready(
                 &sd_send_op_cond(true, false, bus.bus.supports_1v8(), 1 << 5),
                 true,
             )
-            .await?;
-
-        // SPI mode fallback
-        if !bus.bus.supports_mmc() {
-            this.ocr = bus.send_command(read_ocr(), false).await?.into();
-            bus.bus.set_bus(BusWidth::W1, freq)?;
-
-            return Ok((this, freq));
-        }
+            .await?
+            .into();
 
         // UHS-I voltage switch. Per SD Physical Layer Spec §3.7.5 the
         // voltage switch must happen here — between ACMD41 (which
@@ -1101,11 +1218,10 @@ impl Acquirable for Card {
                 .await?;
         }
 
-        if CardStatus::<SD>::from(
-            bus.send_command(common::card_status(bus.rca, false), false)
-                .await?,
-        )
-        .state()
+        if bus
+            .send_command(common::card_status(bus.rca, false), false)
+            .await?
+            .state()
             != CurrentState::Transfer
         {
             return Err(MmcError::Signaling);
@@ -1124,6 +1240,67 @@ impl Acquirable for Card {
     }
 }
 
+impl Acquirable<spi::SpiMode> for Card
+where
+    for<'all> <common::Cmd13 as Command<spi::SpiMode>>::Resp<'all>: CardStatus,
+{
+    type Ext = SD;
+    type SendOpCond = Acmd41;
+    async fn acquire<B: MmcBus<Mode = spi::SpiMode>, D: DelayNs>(
+        bus: &mut BusAdapter<B, D>,
+        block_size: BlockSize,
+        bus_width: BusWidth,
+        freq: u32,
+    ) -> Result<(Self, u32), MmcError> {
+        let mut this = Self::default();
+
+        if matches!(block_size, BlockSize::B512) {
+            // Only block len of 512 is supported in SPI mode
+            return Err(MmcError::BlockSize);
+        }
+
+        if matches!(bus_width, BusWidth::W1) {
+            return Err(MmcError::BusWidth);
+        }
+
+        /// Card interface condition (R7)
+        pub type CIC = spi::R7;
+
+        // CMD8 — check voltage + pattern
+        let cic: CIC = bus.send_command(send_if_cond(1, 0xAA), false).await?;
+        if cic.check_pattern != 0xAA || (cic.voltage & 1) == 0 {
+            return Err(MmcError::Voltage);
+        }
+
+        // ACMD41 — negotiate OCR (with S18A if host supports 1.8V)
+        bus.get_ready(&spi::sd_send_op_cond(true), true).await?;
+
+        this.ocr = bus.send_command(read_ocr(), false).await?.into();
+
+        // CMD9 — read CSD
+        let mut buf = aligned::Aligned([0xFFu8; _]);
+        bus.read_blocks(spi::send_csd(&mut buf), false, false)
+            .await?;
+        this.csd = CSD::from(u128::from_ne_bytes(*buf));
+
+        // ACMD51 — read SCR
+        bus.read_blocks(sd::send_scr(&mut this.scr), false, true)
+            .await?;
+
+        bus.bus.set_bus(BusWidth::W1, freq.min(25_000_000))?;
+
+        bus.send_command(spi::card_status(), false)
+            .await?
+            .to_result()?;
+
+        // ACMD13 — SD Status
+        bus.read_blocks(sd::sd_status(&mut this.status), false, true)
+            .await?;
+
+        Ok((this, freq))
+    }
+}
+
 impl Card {
     /// Switch mode using CMD6.
     ///
@@ -1132,11 +1309,17 @@ impl Card {
     /// frequency to be > 12.5MHz.
     ///
     /// SD only.
-    async fn switch_signalling_mode<B: MmcBus, D: DelayNs>(
+    async fn switch_signalling_mode<'b, B: MmcBus<Mode = SdMode>, D: DelayNs>(
         bus: &mut BusAdapter<B, D>,
-        buf: &mut Aligned<A4, [u8; 64]>,
+        buf: &'b mut Aligned<A4, [u8; 64]>,
         signalling: Signalling,
-    ) -> Result<Signalling, MmcError> {
+    ) -> Result<Signalling, MmcError>
+    where
+        for<'all> Cmd6<'all>: BlockReadCommand<SdMode>,
+        common::Cmd13: ControlCommand<SdMode>,
+        common::Cmd55: ControlCommand<SdMode>,
+        for<'all> <common::Cmd13 as Command<SdMode>>::Resp<'all>: CardStatus,
+    {
         // NB PLSS v7_10 4.3.10.4: "the use of SET_BLK_LEN command is not
         // necessary"
 
@@ -1159,9 +1342,12 @@ impl Card {
         // so a total delay of 640ns is required here
         bus.delay.delay_ns(640).await;
 
+        let (chunks, []) = buf.as_chunks() else {
+            unreachable!();
+        };
+
         // Function Selection of Function Group 1
-        let selection =
-            (u32::from_be(u32::from_le_bytes(buf[16..16 + 4].try_into().unwrap())) >> 24) & 0xF;
+        let selection = (u32::from_ne_bytes(chunks[4]) >> 24) & 0xF;
 
         match selection {
             0 => Ok(Signalling::SDR12),
@@ -1175,7 +1361,11 @@ impl Card {
 }
 
 /// Card Storage Device
-impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLOCK_SIZE> {
+impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLOCK_SIZE>
+where
+    Card: Acquirable<B::Mode>,
+    Self: AddressableBlockDevice<Card, B, D, BLOCK_SIZE>,
+{
     /// Create a new SD card
     pub async fn new_sd_card(bus: B, freq: u32, delay: D) -> Result<Self, MmcError> {
         Self::new(bus, delay, freq).await

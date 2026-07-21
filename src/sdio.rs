@@ -9,9 +9,8 @@ use embedded_hal_async::delay::DelayNs;
 
 use crate::{
     BlockCommand, BlockReadCommand, BlockWriteCommand, BusAdapter, BusWidth, ByteCommand,
-    ByteReadCommand, ByteWriteCommand, Command, ControlCommand, MmcBus, MmcError, R4, R5,
-    block_device::slice_to_blocks_mut,
-    sd::{self, OCR, RCA},
+    ByteReadCommand, ByteWriteCommand, Command, CommandIndex, ControlCommand, MmcBus, MmcError, R4,
+    R5, Response as _, SdMode, SdioData, block_device::slice_to_blocks_mut, common, sd, spi,
 };
 
 /// Type marker for SD-specific extensions.
@@ -23,14 +22,22 @@ pub struct Cmd5 {
     pub switch_to_1_8v_request: bool,
     pub voltage_window: u16,
 }
-impl Command for Cmd5 {
+impl CommandIndex for Cmd5 {
     const INDEX: u8 = 5;
+}
+impl Command<SdMode> for Cmd5 {
     type Resp<'a> = R4;
     fn arg(&self) -> u32 {
         u32::from(self.switch_to_1_8v_request) << 24 | u32::from(self.voltage_window & 0x1FF) << 15
     }
 }
-impl ControlCommand for Cmd5 {}
+impl Command<spi::SpiMode> for Cmd5 {
+    type Resp<'a> = spi::R4;
+    fn arg(&self) -> u32 {
+        u32::from(self.switch_to_1_8v_request) << 24 | u32::from(self.voltage_window & 0x1FF) << 15
+    }
+}
+impl<M> ControlCommand<M> for Cmd5 where Self: Command<M> {}
 
 /// CMD5: IO Op Command
 ///
@@ -53,8 +60,10 @@ pub struct Cmd52 {
     pub addr: u32,
     pub data: u8,
 }
-impl Command for Cmd52 {
+impl CommandIndex for Cmd52 {
     const INDEX: u8 = 52;
+}
+impl Command<SdMode> for Cmd52 {
     type Resp<'a> = R5;
     fn arg(&self) -> u32 {
         let rw = (self.write as u32) << 31;
@@ -65,7 +74,7 @@ impl Command for Cmd52 {
         rw | fn_num | raw | addr | data
     }
 }
-impl ControlCommand for Cmd52 {}
+impl<M> ControlCommand<M> for Cmd52 where Self: Command<M> {}
 
 /// CMD53 — IO_RW_EXTENDED (byte mode read)
 pub struct Cmd53ByteRead<'a> {
@@ -75,8 +84,10 @@ pub struct Cmd53ByteRead<'a> {
     pub buf: &'a mut Aligned<A4, [u8]>,
 }
 
-impl<'a> Command for Cmd53ByteRead<'a> {
+impl<'a> CommandIndex for Cmd53ByteRead<'a> {
     const INDEX: u8 = 53;
+}
+impl<'a> Command<SdMode> for Cmd53ByteRead<'a> {
     type Resp<'b>
         = R5
     where
@@ -93,7 +104,7 @@ impl<'a> Command for Cmd53ByteRead<'a> {
     }
 }
 
-impl<'a> ByteCommand for Cmd53ByteRead<'a> {
+impl<'a> ByteCommand<SdMode> for Cmd53ByteRead<'a> {
     fn byte_count(&self) -> usize {
         self.buf.len()
     }
@@ -102,8 +113,7 @@ impl<'a> ByteCommand for Cmd53ByteRead<'a> {
     }
 }
 
-impl<'a> ByteReadCommand for Cmd53ByteRead<'a> {
-}
+impl<'a> ByteReadCommand for Cmd53ByteRead<'a> {}
 
 /// CMD53 — IO_RW_EXTENDED (byte mode write)
 pub struct Cmd53ByteWrite<'a> {
@@ -113,8 +123,10 @@ pub struct Cmd53ByteWrite<'a> {
     pub buf: &'a mut Aligned<A4, [u8]>,
 }
 
-impl<'a> Command for Cmd53ByteWrite<'a> {
+impl<'a> CommandIndex for Cmd53ByteWrite<'a> {
     const INDEX: u8 = 53;
+}
+impl<'a> Command<SdMode> for Cmd53ByteWrite<'a> {
     type Resp<'b>
         = R5
     where
@@ -131,7 +143,7 @@ impl<'a> Command for Cmd53ByteWrite<'a> {
     }
 }
 
-impl<'a> ByteCommand for Cmd53ByteWrite<'a> {
+impl<'a> ByteCommand<SdMode> for Cmd53ByteWrite<'a> {
     fn byte_count(&self) -> usize {
         self.buf.len()
     }
@@ -140,8 +152,7 @@ impl<'a> ByteCommand for Cmd53ByteWrite<'a> {
     }
 }
 
-impl<'a> ByteWriteCommand for Cmd53ByteWrite<'a> {
-}
+impl<'a> ByteWriteCommand for Cmd53ByteWrite<'a> {}
 
 /// CMD53 — IO_RW_EXTENDED (block mode read)
 pub struct Cmd53BlockRead<'a, const BLOCK_SIZE: usize> {
@@ -151,8 +162,10 @@ pub struct Cmd53BlockRead<'a, const BLOCK_SIZE: usize> {
     pub buf: &'a mut [Aligned<A4, [u8; BLOCK_SIZE]>],
 }
 
-impl<'a, const BLOCK_SIZE: usize> Command for Cmd53BlockRead<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize> CommandIndex for Cmd53BlockRead<'a, BLOCK_SIZE> {
     const INDEX: u8 = 53;
+}
+impl<'a, const BLOCK_SIZE: usize> Command<SdMode> for Cmd53BlockRead<'a, BLOCK_SIZE> {
     type Resp<'b>
         = R5
     where
@@ -169,7 +182,7 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd53BlockRead<'a, BLOCK_SIZE> {
     }
 }
 
-impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd53BlockRead<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize> BlockCommand<SdMode> for Cmd53BlockRead<'a, BLOCK_SIZE> {
     type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
 
     fn block_count(&self) -> u32 {
@@ -181,9 +194,7 @@ impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd53BlockRead<'a, BLOCK_SIZE
     }
 }
 
-impl<'a, const BLOCK_SIZE: usize> BlockReadCommand for Cmd53BlockRead<'a, BLOCK_SIZE> {
-
-}
+impl<'a, const BLOCK_SIZE: usize> BlockReadCommand<SdMode> for Cmd53BlockRead<'a, BLOCK_SIZE> {}
 
 /// CMD53 — IO_RW_EXTENDED (block mode write)
 pub struct Cmd53BlockWrite<'a, const BLOCK_SIZE: usize> {
@@ -193,8 +204,10 @@ pub struct Cmd53BlockWrite<'a, const BLOCK_SIZE: usize> {
     pub buf: &'a mut [Aligned<A4, [u8; BLOCK_SIZE]>],
 }
 
-impl<'a, const BLOCK_SIZE: usize> Command for Cmd53BlockWrite<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize> CommandIndex for Cmd53BlockWrite<'a, BLOCK_SIZE> {
     const INDEX: u8 = 53;
+}
+impl<'a, const BLOCK_SIZE: usize> Command<SdMode> for Cmd53BlockWrite<'a, BLOCK_SIZE> {
     type Resp<'b>
         = R5
     where
@@ -211,7 +224,7 @@ impl<'a, const BLOCK_SIZE: usize> Command for Cmd53BlockWrite<'a, BLOCK_SIZE> {
     }
 }
 
-impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd53BlockWrite<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize> BlockCommand<SdMode> for Cmd53BlockWrite<'a, BLOCK_SIZE> {
     type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
 
     fn block_count(&self) -> u32 {
@@ -223,16 +236,15 @@ impl<'a, const BLOCK_SIZE: usize> BlockCommand for Cmd53BlockWrite<'a, BLOCK_SIZ
     }
 }
 
-impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand for Cmd53BlockWrite<'a, BLOCK_SIZE> {
-}
+impl<'a, const BLOCK_SIZE: usize> BlockWriteCommand<SdMode> for Cmd53BlockWrite<'a, BLOCK_SIZE> {}
 
-impl OCR<SDIO> {
+impl sd::OCR<SDIO> {
     pub fn num_io_functions(&self) -> u8 {
         ((self.0 >> 28) & 0x7) as u8
     }
 }
 
-impl fmt::Debug for OCR<SDIO> {
+impl fmt::Debug for sd::OCR<SDIO> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("OCR: Operation Conditions Register")
             .field("IO functions", &self.num_io_functions())
@@ -373,10 +385,21 @@ pub const fn fbr_block_size_high(function: u8) -> u32 {
 pub struct SdioCard<B: MmcBus, D: DelayNs> {
     bus: BusAdapter<B, D>,
     freq: u32,
-    ocr: OCR<SDIO>,
+    ocr: common::OCR<SDIO>,
 }
 
-impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
+impl<B: MmcBus, D: DelayNs> SdioCard<B, D>
+where
+    common::Cmd0: ControlCommand<B::Mode>,
+    Cmd5: ControlCommand<B::Mode>,
+    for<'all> <Cmd5 as Command<B::Mode>>::Resp<'all>: common::CardInIdleState,
+    common::OCR<SDIO>: for<'all> From<<Cmd5 as Command<B::Mode>>::Resp<'all>>,
+    common::Cmd13: ControlCommand<B::Mode>,
+    for<'all> <common::Cmd13 as Command<B::Mode>>::Resp<'all>: common::CardStatus,
+    Cmd52: ControlCommand<B::Mode>,
+    for<'a> <Cmd52 as Command<B::Mode>>::Resp<'a>: SdioData,
+    common::Cmd55: ControlCommand<B::Mode>,
+{
     /// Create a new SDIO card
     pub async fn new(bus: B, delay: D, freq: u32) -> Result<Self, MmcError> {
         let mut this = Self::new_uninit(bus, delay);
@@ -390,7 +413,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         Self {
             bus: BusAdapter { bus, delay, rca: 0 },
             freq: 0,
-            ocr: OCR::default(),
+            ocr: common::OCR::default(),
         }
     }
 
@@ -414,7 +437,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
 
         // CMD5 inquiry (arg = 0): the card reports the voltage window it
         // supports but does not begin powering up.
-        let inquiry: OCR<SDIO> = self
+        let inquiry: common::OCR<SDIO> = self
             .bus
             .send_command(io_send_op_cond(false, 0x0), false)
             .await?
@@ -431,21 +454,23 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         }
         self.ocr = self
             .bus
-            .get_ocr(&io_send_op_cond(false, window), false)
-            .await?;
+            .get_ready(&io_send_op_cond(false, window), false)
+            .await?
+            .into();
 
         // UDB-based SDIO does not support io volt switch sequence
 
-        // Get RCA
-        self.bus.rca = RCA::<SDIO>::from(
-            self.bus
-                .send_command(sd::send_relative_address(), false)
-                .await?,
-        )
-        .address();
+        // todo: ellie (21.07.2026) - SD mode support for SDIO cards
+        // // Get RCA
+        // self.bus.rca = common::RCA::<SDIO>::from(
+        //     self.bus
+        //         .send_command(sd::send_relative_address(), false)
+        //         .await?,
+        // )
+        // .address();
 
-        // Select the card with RCA
-        self.bus.select_card(Some(self.bus.rca)).await?;
+        // // Select the card with RCA
+        // self.bus.select_card(Some(self.bus.rca)).await?;
 
         let cap = self.cmd52_read(0, CCCR_CARD_CAP).await?;
 
@@ -546,7 +571,11 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
     // ── CMD52 helpers (single-byte register access) ───────────────────────────
 
     /// Read a single byte from a function's register space (CMD52).
-    pub async fn cmd52_read(&mut self, func: u8, addr: u32) -> Result<u8, MmcError> {
+    pub async fn cmd52_read(&mut self, func: u8, addr: u32) -> Result<u8, MmcError>
+    where
+        Cmd52: Command<B::Mode>,
+        for<'a> <Cmd52 as Command<B::Mode>>::Resp<'a>: SdioData,
+    {
         let resp = self
             .bus
             .send_command(
@@ -560,10 +589,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
                 false,
             )
             .await?;
-
-        resp.to_result()?;
-
-        Ok(resp.data)
+        Ok(resp.to_result()?.data())
     }
 
     /// Write a single byte to a function's register space (CMD52).
@@ -608,9 +634,7 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
             )
             .await?;
 
-        resp.to_result()?;
-
-        Ok(resp.data)
+        Ok(resp.to_result()?.data())
     }
 
     // ── CMD53 helpers (bulk transfers) ────────────────────────────────────────
@@ -622,7 +646,10 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         increment: bool,
         addr: u32, // 17-bit
         buf: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
-    ) -> Result<(), MmcError> {
+    ) -> Result<(), MmcError>
+    where
+        for<'a> Cmd53BlockRead<'a, BLOCK_SIZE>: BlockReadCommand<B::Mode>,
+    {
         self.bus
             .bus
             .read_blocks(
@@ -635,7 +662,8 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
                 false,
             )
             .await?
-            .to_result()
+            .to_result()?;
+        Ok(())
     }
 
     /// Read in multibyte mode using cmd53
@@ -655,7 +683,8 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
                 buf,
             })
             .await?
-            .to_result()
+            .to_result()?;
+        Ok(())
     }
 
     /// Read first in block mode and then in multibyte mode using cmd53. Always increments.
@@ -664,7 +693,10 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         func: u8,
         mut addr: u32,
         buf: &mut Aligned<A4, [u8]>,
-    ) -> Result<(), MmcError> {
+    ) -> Result<(), MmcError>
+    where
+        for<'a> Cmd53BlockRead<'a, BLOCK_SIZE>: BlockReadCommand<B::Mode>,
+    {
         // Use buf.len() (Deref to [u8]) not size_of_val, which rounds up to 4 bytes.
         let byte_part = buf.len() % BLOCK_SIZE;
         let block_part = buf.len() - byte_part;
@@ -696,7 +728,10 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         increment: bool,
         addr: u32, // 17-bit
         buf: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
-    ) -> Result<(), MmcError> {
+    ) -> Result<(), MmcError>
+    where
+        for<'a> Cmd53BlockWrite<'a, BLOCK_SIZE>: BlockWriteCommand<B::Mode>,
+    {
         self.bus
             .bus
             .write_blocks(
@@ -709,7 +744,8 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
                 false,
             )
             .await?
-            .to_result()
+            .to_result()?;
+        Ok(())
     }
 
     /// Write in multibyte mode using cmd53
@@ -729,7 +765,8 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
                 buf,
             })
             .await?
-            .to_result()
+            .to_result()?;
+        Ok(())
     }
 
     /// Write first in block mode and then in multibyte mode using cmd53. Always increments.
@@ -738,7 +775,10 @@ impl<B: MmcBus, D: DelayNs> SdioCard<B, D> {
         func: u8,
         mut addr: u32,
         buf: &mut Aligned<A4, [u8]>,
-    ) -> Result<(), MmcError> {
+    ) -> Result<(), MmcError>
+    where
+        for<'a> Cmd53BlockWrite<'a, BLOCK_SIZE>: BlockWriteCommand<B::Mode>,
+    {
         // Use buf.len() (Deref to [u8]) not size_of_val, which rounds up to 4 bytes.
         let byte_part = buf.len() % BLOCK_SIZE;
         let block_part = buf.len() - byte_part;

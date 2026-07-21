@@ -1,9 +1,13 @@
+use core::marker::PhantomData;
+
 use embedded_hal::digital::OutputPin;
 use embedded_hal_async::delay::DelayNs;
 use embedded_hal_async::spi::SpiBus;
 
 use crate::{
-    BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand, ByteWriteCommand, Command, CommandIndex, ControlCommand, ResponseLenBytes, MmcBus, MmcError, Response, ResponseWords
+    BlockCommand, BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand, ByteWriteCommand,
+    Command, CommandIndex, ControlCommand, FromBytes, MmcBus, MmcError, Response, ResponseLenBytes,
+    ResponseWords, PowerUpReady, common, sd,
 };
 
 /// Marker trait for commands in SPI mode
@@ -32,6 +36,63 @@ impl SpiResponseLen {
 impl ResponseLenBytes for SpiResponseLen {
     fn bytes(&self) -> usize {
         self.bytes()
+    }
+}
+
+/// CMD9 — SEND_CSD
+pub struct Cmd9<'a> {
+    pub buf: &'a mut [aligned::Aligned<aligned::A4, [u8; 16]>],
+}
+impl<'a> CommandIndex for Cmd9<'a> {
+    const INDEX: u8 = 9;
+}
+impl<'a> Command<SpiMode> for Cmd9<'a> {
+    type Resp<'r> = R1 where Self: 'r;
+    fn arg(&self) -> u32 {
+        0
+    }
+}
+impl<'a> BlockCommand<SpiMode> for Cmd9<'a> {
+    type Block = aligned::Aligned<aligned::A4, [u8; 16]>;
+
+    fn block_count(&self) -> u32 {
+        1
+    }
+
+    fn buf(&mut self) -> &mut [Self::Block] {
+        &mut *self.buf
+    }
+}
+impl<'a> BlockReadCommand<SpiMode> for Cmd9<'a> {}
+
+/// CMD9: Send CSD
+pub fn send_csd<'a>(buf: &'a mut aligned::Aligned<aligned::A4, [u8; 16]>) -> Cmd9<'a> {
+    Cmd9 {
+        buf: core::slice::from_mut(buf),
+    }
+}
+
+/// CMD13: Ask card to send status
+pub fn card_status() -> common::Cmd13 {
+    common::Cmd13 {
+        rca: 0,
+        task_status: false,
+    }
+}
+
+/// ACMD41 — SD_SEND_OP_COND
+///
+/// In SPI mode only the HCS bit is supported.
+///
+/// The trait implementation for SpiMode ignores the other bits
+/// so this helper function is just for convenience when using a
+/// known SPI mode bus.
+pub fn sd_send_op_cond(host_high_capacity_support: bool) -> sd::Acmd41 {
+    sd::Acmd41 {
+        host_high_capacity_support,
+        sdxc_power_control: false,
+        switch_to_1_8v_request: false,
+        voltage_window: 0,
     }
 }
 
@@ -88,74 +149,329 @@ impl ResponseWords for [u8; 5] {
 
 /// R1 — Normal status response
 ///
-/// 8-bit, CRC-checked, no busy
+/// 8-bit, no busy
+#[derive(Clone, Copy)]
 pub struct R1 {
-    pub status: u8,
+    pub result: u8,
+}
+
+impl R1 {
+    pub const PARAMETER_ERROR: u8 = 0b0100_0000;
+    pub const ADDRESS_ERROR: u8 = 0b0010_0000;
+    pub const ERASE_SEQ_ERROR: u8 = 0b0001_0000;
+    pub const COM_CRC_ERROR: u8 = 0b0000_1000;
+    pub const ILLEGAL_COMMAND: u8 = 0b0000_0100;
+    pub const ERASE_RESET: u8 = 0b0000_0010;
+    pub const IN_IDLE_STATE: u8 = 0b0000_0001;
 }
 
 impl Response for R1 {
     type Words = [u8; 1];
 
-    const CRC: bool = true;
+    const CRC: bool = false;
     const BUSY: bool = false;
 
+    #[inline]
     fn from_words(buf: &Self::Words) -> Self {
-        Self { status: buf[0] }
+        Self { result: buf[0] }
+    }
+
+    #[inline]
+    fn to_result(self) -> Result<Self, MmcError> {
+        match self.result {
+            Self::PARAMETER_ERROR => Err(MmcError::Card(crate::CardError::OutOfRange)),
+            Self::ADDRESS_ERROR => Err(MmcError::Card(crate::CardError::AddressError)),
+            Self::ERASE_SEQ_ERROR => Err(MmcError::Card(crate::CardError::EraseSeqError)),
+            Self::COM_CRC_ERROR => Err(MmcError::Card(crate::CardError::ComCrcError)),
+            Self::ILLEGAL_COMMAND => Err(MmcError::Card(crate::CardError::IllegalCommand)),
+            Self::ERASE_RESET => Err(MmcError::Card(crate::CardError::EraseReset)),
+            _ => Ok(self),
+        }
+    }
+}
+
+impl common::CardInIdleState for R1 {
+    fn card_in_idle_state(&self) -> bool {
+        self.result & Self::IN_IDLE_STATE != 0
+    }
+}
+
+impl<T: common::CardInIdleState + Response> PowerUpReady for T {
+    fn ready(&self) -> bool {
+        self.card_in_idle_state()
     }
 }
 
 /// R1b — R1 + busy on DAT0
 ///
-/// 8-bit, CRC-checked, *busy*
+/// 8-bit, *busy*
 /// Card holds DAT0 low until internal operation completes.
 pub struct R1b {
-    pub status: u8,
+    pub response: R1,
 }
 
 impl Response for R1b {
-    type Words = [u8; 1];
+    type Words = <R1 as Response>::Words;
 
-    const CRC: bool = true;
-    const BUSY: bool = false;
+    const CRC: bool = <R1 as Response>::CRC;
+    const BUSY: bool = true;
 
+    #[inline]
     fn from_words(buf: &Self::Words) -> Self {
-        Self { status: buf[0] }
+        Self {
+            response: R1::from_words(buf),
+        }
+    }
+
+    #[inline]
+    fn to_result(self) -> Result<Self, MmcError> {
+        self.response.to_result().and(Ok(self))
     }
 }
 
 /// R2 — Send Status response
 ///
-/// 16-bit, CRC-checked
+/// 16-bit
 pub struct R2 {
-    pub bytes: [u8; 2]
+    pub result: R1,
+    pub status: u8,
 }
 
 impl Response for R2 {
     type Words = [u8; 2];
 
-    const CRC: bool = true;
+    const CRC: bool = false;
     const BUSY: bool = false;
 
+    #[inline]
     fn from_words(buf: &Self::Words) -> Self {
-        Self { bytes: *buf }
+        Self {
+            result: R1::from_words(&[buf[0]]),
+            status: buf[1],
+        }
+    }
+
+    #[inline]
+    fn to_result(self) -> Result<Self, MmcError> {
+        self.result.to_result().and(match self.status {
+            Self::CSD_OVERWRITE => Err(MmcError::Card(crate::CardError::CidCsdOverwrite)),
+            Self::ERASE_PARAM => Err(MmcError::Card(crate::CardError::EraseParamError)),
+            Self::WP_VIOLATION => Err(MmcError::Card(crate::CardError::WriteProtViolation)),
+            Self::CARD_ECC_FAILED => Err(MmcError::Card(crate::CardError::CardEccFailed)),
+            Self::CC_ERROR => Err(MmcError::Card(crate::CardError::CcError)),
+            Self::ERROR => Err(MmcError::Card(crate::CardError::Error)),
+            Self::LOCK_UNLOCK_FAILED => Err(MmcError::Card(crate::CardError::LockUnlockFailed)),
+            _ => Ok(self),
+        })
+    }
+}
+
+impl R2 {
+    // NOTE: Two bits, 7 and 1, are overloaded and can each indicate one of two errors
+    // depending on context (which ever error is relevant to the sent command).
+    pub const OUT_OF_RANGE: u8 = 0b1000_0000;
+    pub const CSD_OVERWRITE: u8 = 0b1000_0000;
+    pub const ERASE_PARAM: u8 = 0b0100_0000;
+    pub const WP_VIOLATION: u8 = 0b0010_0000;
+    pub const CARD_ECC_FAILED: u8 = 0b0001_0000;
+    pub const CC_ERROR: u8 = 0b0000_1000;
+    pub const ERROR: u8 = 0b0000_0100;
+    pub const WP_ERASE_SKIP: u8 = 0b0000_0010;
+    pub const LOCK_UNLOCK_FAILED: u8 = 0b0000_0010;
+    pub const CARD_IS_LOCKED: u8 = 0b0000_0001;
+
+    const fn locked(&self) -> bool {
+        self.status & Self::CARD_IS_LOCKED != 0
+    }
+}
+
+impl<Ext> From<R2> for common::CardStatusRegister<Ext> {
+    fn from(resp: R2) -> Self {
+        let mut register_bits = 0u32;
+        if resp.result.result & R1::PARAMETER_ERROR != 0 {
+            register_bits |= Self::OUT_OF_RANGE;
+        }
+        if resp.result.result & R1::ADDRESS_ERROR != 0 {
+            register_bits |= Self::ADDRESS_ERROR;
+        }
+        if resp.result.result & R1::ERASE_SEQ_ERROR != 0 {
+            register_bits |= Self::ERASE_SEQ_ERROR;
+        }
+        if resp.result.result & R1::COM_CRC_ERROR != 0 {
+            register_bits |= Self::COM_CRC_ERROR;
+        }
+        if resp.result.result & R1::ILLEGAL_COMMAND != 0 {
+            register_bits |= Self::ILLEGAL_COMMAND;
+        }
+        if resp.result.result & R1::ERASE_RESET != 0 {
+            register_bits |= Self::ERASE_RESET;
+        }
+        if resp.result.result & R1::IN_IDLE_STATE == 0 {
+            register_bits |= ((common::CurrentState::Ready as u32) << 9) & Self::STATE_BITS_MASK;
+        }
+        if resp.status & R2::CSD_OVERWRITE != 0 {
+            register_bits |= Self::CSD_OVERWRITE;
+        }
+        if resp.status & R2::ERASE_PARAM != 0 {
+            register_bits |= Self::ERASE_PARAM;
+        }
+        if resp.status & R2::WP_VIOLATION != 0 {
+            register_bits |= Self::WP_VIOLATION;
+        }
+        if resp.status & R2::CARD_ECC_FAILED != 0 {
+            register_bits |= Self::CARD_ECC_FAILED;
+        }
+        if resp.status & R2::CC_ERROR != 0 {
+            register_bits |= Self::CC_ERROR;
+        }
+        if resp.status & R2::ERROR != 0 {
+            register_bits |= Self::ERROR;
+        }
+        if resp.status & R2::LOCK_UNLOCK_FAILED == 0 {
+            register_bits |= Self::LOCK_UNLOCK_FAILED;
+        }
+        if resp.status & R2::CARD_IS_LOCKED == 0 {
+            register_bits |= Self::CARD_IS_LOCKED;
+        }
+        Self(register_bits, PhantomData)
+    }
+}
+
+/// R3 — Read OCR response
+///
+/// 40-bit
+pub struct R3 {
+    pub response: R1,
+    pub ocr: u32,
+}
+
+impl Response for R3 {
+    type Words = [u8; 5];
+
+    const CRC: bool = false;
+    const BUSY: bool = false;
+
+    #[inline]
+    fn from_words(buf: &Self::Words) -> Self {
+        let response = R1::from_words(&[buf[0]]);
+        let (_, ocr) = buf.split_last_chunk().unwrap();
+        let ocr = u32::from_ne_bytes(*ocr);
+        Self { response, ocr }
+    }
+
+    #[inline]
+    fn to_result(self) -> Result<Self, MmcError> {
+        self.response.to_result().and(Ok(self))
+    }
+}
+
+impl<Ext> From<R3> for common::OCR<Ext> {
+    fn from(value: R3) -> Self {
+        Self(value.ocr, PhantomData)
     }
 }
 
 /// R7 — Send Status response
 ///
-/// 40-bit, CRC-checked
+/// 40-bit
 pub struct R7 {
-    pub bytes: [u8; 5],
+    pub response: R1,
+    pub voltage: u8,
+    pub check_pattern: u8,
 }
 
 impl Response for R7 {
     type Words = [u8; 5];
 
-    const CRC: bool = true;
+    const CRC: bool = false;
     const BUSY: bool = false;
 
+    #[inline]
     fn from_words(buf: &Self::Words) -> Self {
-        Self { bytes: *buf }
+        let response = R1::from_words(&[buf[0]]);
+        let voltage = 0b0000_1111 & buf[3];
+        let check_pattern = buf[4];
+        Self {
+            response,
+            voltage,
+            check_pattern,
+        }
+    }
+
+    fn to_result(self) -> Result<Self, MmcError> {
+        self.response.to_result().and(Ok(self))
+    }
+}
+
+/// Modified R1 — Normal status response for SDIO
+///
+/// 8-bit, no busy
+#[derive(Clone, Copy)]
+pub struct R1M {
+    pub response: u8,
+}
+
+impl Response for R1M {
+    type Words = [u8; 1];
+
+    const CRC: bool = false;
+    const BUSY: bool = false;
+
+    #[inline]
+    fn from_words(buf: &Self::Words) -> Self {
+        Self { response: buf[0] }
+    }
+
+    #[inline]
+    fn to_result(self) -> Result<Self, MmcError> {
+        match self.response {
+            0b0100_0000 => Err(MmcError::Card(crate::CardError::OutOfRange)),
+            // TODO: Sort out R1 error status handling: this should be function number
+            0b0001_0000 => Err(MmcError::Card(crate::CardError::AddressError)),
+            0b0000_1000 => Err(MmcError::Card(crate::CardError::ComCrcError)),
+            0b0000_0100 => Err(MmcError::Card(crate::CardError::IllegalCommand)),
+            _ => Ok(self),
+        }
+    }
+}
+
+impl common::CardInIdleState for R1M {
+    fn card_in_idle_state(&self) -> bool {
+        self.response & 0b0000_0001 == 0b0000_0001
+    }
+}
+
+/// R4 — SDIO OCR + capability
+///
+/// 40-bit, no busy
+/// Returned by CMD5 (IO_SEND_OP_COND)
+pub struct R4 {
+    pub response: R1M,
+    pub ocr: u32,
+}
+
+impl Response for R4 {
+    type Words = [u8; 5];
+    const CRC: bool = false;
+    const BUSY: bool = false;
+
+    #[inline]
+    fn from_words(buf: &Self::Words) -> Self {
+        let response = R1M::from_words(&[buf[0]]);
+        let (_, ocr) = buf.split_last_chunk().unwrap();
+        let ocr = u32::from_ne_bytes(*ocr);
+        Self { response, ocr }
+    }
+
+    #[inline]
+    fn to_result(self) -> Result<Self, MmcError> {
+        self.response.to_result().and(Ok(self))
+    }
+}
+
+impl common::CardInIdleState for R4 {
+    fn card_in_idle_state(&self) -> bool {
+        self.response.card_in_idle_state()
     }
 }
 
@@ -260,10 +576,11 @@ impl<SPI, CS, DLY> SpiMmcBus<SPI, CS, DLY> {
     async fn read_response_words<R: Response>(&mut self) -> Result<R, MmcError>
     where
         SPI: SpiBus<u8>,
+        R::Words: FromBytes,
     {
         let r1 = self.read_r1().await?;
 
-        let total_bytes = <R::Words as ResponseWords>::LEN.into();
+        let total_bytes = R::Words::LEN.bytes();
 
         let mut raw = [0u8; 1 + 16];
         raw[0] = r1;
@@ -277,14 +594,7 @@ impl<SPI, CS, DLY> SpiMmcBus<SPI, CS, DLY> {
             raw[1..=total_bytes].copy_from_slice(&tmp[..total_bytes]);
         }
 
-        let mut words = [0u32; 4];
-        for (i, chunk) in raw[..=total_bytes].chunks(4).take(words.len()).enumerate() {
-            let mut w = 0u32;
-            for &b in chunk {
-                w = (w << 8) | b as u32;
-            }
-            words[i] = w;
-        }
+        let words = FromBytes::from_bytes(raw);
 
         if R::BUSY {
             self.wait_not_busy().await?;
@@ -413,34 +723,18 @@ where
         Ok(resp)
     }
 
-    async fn read_bytes<'a, C>(&mut self, mut cmd: C) -> Result<C::Resp<'a>, MmcError>
+    async fn read_bytes<'a, C>(&mut self, _cmd: C) -> Result<C::Resp<'a>, MmcError>
     where
         C: ByteReadCommand + 'a,
     {
-        self.send_cmd_header(&cmd).await?;
-        let len = cmd.byte_count();
-        let slice = &mut cmd.buf()[..len];
-
-        self.read_block(slice).await?;
-
-        let resp = self.read_response_words::<C::Resp<'_>>().await?;
-        self.deselect().await?;
-        Ok(resp)
+        Err(MmcError::Unsupported)
     }
 
     async fn write_bytes<'a, C>(&mut self, mut cmd: C) -> Result<C::Resp<'a>, MmcError>
     where
         C: ByteWriteCommand + 'a,
     {
-        self.send_cmd_header(&cmd).await?;
-        let len = cmd.byte_count();
-        let slice = &mut cmd.buf()[..len];
-
-        self.write_block(slice).await?;
-
-        let resp = self.read_response_words::<C::Resp<'_>>().await?;
-        self.deselect().await?;
-        Ok(resp)
+        Err(MmcError::Unsupported)
     }
 
     async fn init_idle(&mut self, hz: u32) -> Result<(), MmcError> {

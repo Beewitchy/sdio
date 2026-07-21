@@ -32,7 +32,7 @@ impl Command<spi::SpiMode> for Cmd0 {
         0
     }
 }
-impl<M> ControlCommand<M> for Cmd0 {}
+impl<M> ControlCommand<M> for Cmd0 where Self: Command<M> {}
 
 /// CMD0 — GO_IDLE_STATE
 pub fn idle() -> Cmd0 {
@@ -52,7 +52,7 @@ impl Command<SdMode> for Cmd2 {
         0
     }
 }
-impl<M> ControlCommand<M> for Cmd2 {}
+impl<M> ControlCommand<M> for Cmd2 where Self: Command<M> {}
 
 /// CMD2: Ask any card to send their CID
 pub fn all_send_cid() -> Cmd2 {
@@ -74,7 +74,7 @@ impl Command<SdMode> for Cmd7 {
         (self.rca as u32) << 16
     }
 }
-impl<M> ControlCommand<M> for Cmd7 {}
+impl<M> ControlCommand<M> for Cmd7 where Self: Command<M> {}
 
 /// CMD7: Select or deselect card
 pub fn select_card(rca: u16) -> Cmd7 {
@@ -94,13 +94,7 @@ impl Command<SdMode> for Cmd9 {
         (self.rca as u32) << 16
     }
 }
-impl Command<spi::SpiMode> for Cmd9 {
-    type Resp<'a> = spi::R1;
-    fn arg(&self) -> u32 {
-        0
-    }
-}
-impl<M> ControlCommand<M> for Cmd9 {}
+impl ControlCommand<SdMode> for Cmd9 {}
 
 /// CMD9: Send CSD
 pub fn send_csd(rca: u16) -> Cmd9 {
@@ -126,7 +120,7 @@ impl Command<spi::SpiMode> for Cmd10 {
         0
     }
 }
-impl<M> ControlCommand<M> for Cmd10 {}
+impl<M> ControlCommand<M> for Cmd10 where Self: Command<M> {}
 
 /// CMD10: Send CID
 pub fn send_cid(rca: u16) -> Cmd10 {
@@ -145,12 +139,12 @@ impl Command<SdMode> for Cmd12 {
     }
 }
 impl Command<spi::SpiMode> for Cmd12 {
-    type Resp<'a> = R1b;
+    type Resp<'a> = spi::R1b;
     fn arg(&self) -> u32 {
         0
     }
 }
-impl<M> ControlCommand<M> for Cmd12 {}
+impl<M> ControlCommand<M> for Cmd12 where Self: Command<M> {}
 
 /// CMD12: Stop transmission
 pub fn stop_transmission() -> Cmd12 {
@@ -175,11 +169,9 @@ impl Command<SdMode> for Cmd13 {
 }
 impl Command<spi::SpiMode> for Cmd13 {
     type Resp<'a> = spi::R2;
-    fn arg(&self) -> u32 {
-        0
-    }
+    fn arg(&self) -> u32 { 0 }
 }
-impl<M> ControlCommand<M> for Cmd13 {}
+impl<M> ControlCommand<M> for Cmd13 where Self: Command<M> {}
 
 /// CMD13: Ask card to send status or task status
 pub fn card_status(rca: u16, task_status: bool) -> Cmd13 {
@@ -213,7 +205,7 @@ impl Command<spi::SpiMode> for Cmd16 {
         self.block_len
     }
 }
-impl<M> ControlCommand<M> for Cmd16 {}
+impl<M> ControlCommand<M> for Cmd16 where Self: Command<M> {}
 
 /// CMD16: Set block len
 pub fn set_block_length(block_len: u32) -> Cmd16 {
@@ -246,7 +238,7 @@ impl<'a, const BLOCK_SIZE: usize> Command<spi::SpiMode> for Cmd17<'a, BLOCK_SIZE
         self.addr
     }
 }
-impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd17<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd17<'a, BLOCK_SIZE> where Self: Command<M> {
     type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         1
@@ -256,7 +248,7 @@ impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd17<'a, BLOCK_SIZE> {
     }
 }
 
-impl<'a, const BLOCK_SIZE: usize, M> BlockReadCommand<M> for Cmd17<'a, BLOCK_SIZE> {}
+impl<'a, const BLOCK_SIZE: usize, M> BlockReadCommand<M> for Cmd17<'a, BLOCK_SIZE> where Self: Command<M> {}
 
 /// CMD17: Read a single block from the card
 pub fn read_single_block<const BLOCK_SIZE: usize>(
@@ -295,7 +287,7 @@ impl<'a, const BLOCK_SIZE: usize> Command<spi::SpiMode> for Cmd18<'a, BLOCK_SIZE
         self.addr
     }
 }
-impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd18<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd18<'a, BLOCK_SIZE> where Self: Command<M> {
     type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         self.bufs.len() as u32
@@ -304,7 +296,7 @@ impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd18<'a, BLOCK_SIZE> {
         self.bufs
     }
 }
-impl<'a, const BLOCK_SIZE: usize, M> BlockReadCommand<M> for Cmd18<'a, BLOCK_SIZE> {}
+impl<'a, const BLOCK_SIZE: usize, M> BlockReadCommand<M> for Cmd18<'a, BLOCK_SIZE> where Self: Command<M> {}
 
 /// CMD18: Read multiple block from the card
 pub fn read_multiple_blocks<const BLOCK_SIZE: usize>(
@@ -340,7 +332,7 @@ impl<'a, const BLOCK_SIZE: usize> Command<spi::SpiMode> for Cmd24<'a, BLOCK_SIZE
         self.addr
     }
 }
-impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd24<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd24<'a, BLOCK_SIZE> where Self: Command<M> {
     type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         1
@@ -350,7 +342,7 @@ impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd24<'a, BLOCK_SIZE> {
     }
 }
 
-impl<'a, const BLOCK_SIZE: usize, M> BlockWriteCommand<M> for Cmd24<'a, BLOCK_SIZE> {}
+impl<'a, const BLOCK_SIZE: usize, M> BlockWriteCommand<M> for Cmd24<'a, BLOCK_SIZE> where Self: Command<M> {}
 
 /// CMD24: Write block
 pub fn write_single_block<const BLOCK_SIZE: usize>(
@@ -389,7 +381,7 @@ impl<'a, const BLOCK_SIZE: usize> Command<spi::SpiMode> for Cmd25<'a, BLOCK_SIZE
         self.addr
     }
 }
-impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd25<'a, BLOCK_SIZE> {
+impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd25<'a, BLOCK_SIZE> where Self: Command<M> {
     type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         self.bufs.len() as u32
@@ -399,7 +391,7 @@ impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd25<'a, BLOCK_SIZE> {
         self.bufs
     }
 }
-impl<'a, const BLOCK_SIZE: usize, M> BlockWriteCommand<M> for Cmd25<'a, BLOCK_SIZE> {}
+impl<'a, const BLOCK_SIZE: usize, M> BlockWriteCommand<M> for Cmd25<'a, BLOCK_SIZE> where Self: Command<M> {}
 
 /// CMD25: Write multiple blocks
 pub fn write_multiple_blocks<const BLOCK_SIZE: usize>(
@@ -425,7 +417,7 @@ impl Command<SdMode> for Cmd38 {
 impl Command<spi::SpiMode> for Cmd38 {
     type Resp<'a> = spi::R1b;
 }
-impl<M> ControlCommand<M> for Cmd38 {}
+impl<M> ControlCommand<M> for Cmd38 where Self: Command<M> {}
 
 /// CMD38: Erase all previously selected write blocks
 pub fn erase() -> Cmd38 {
@@ -451,7 +443,7 @@ impl Command<spi::SpiMode> for Cmd55 {
         0
     }
 }
-impl<M> ControlCommand<M> for Cmd55 {}
+impl<M> ControlCommand<M> for Cmd55 where Self: Command<M> {}
 
 /// CMD55: App Command. Indicates that next command will be a app command
 pub fn app_cmd(rca: u16) -> Cmd55 {
@@ -542,6 +534,7 @@ pub(crate) const fn block_size(len: usize) -> BlockSize {
 /// Ref PLSS_v7_10 Table 4-75
 /// Ref JESD84-B51 Table 68
 #[derive(Eq, PartialEq, Copy, Clone, Debug)]
+#[repr(u8)]
 #[allow(dead_code)]
 pub enum CurrentState {
     /// Card is in idle state
@@ -659,7 +652,7 @@ impl fmt::Debug for CurrentConsumption {
 ///
 /// R3
 #[derive(Clone, Copy, Default)]
-pub struct OCR<Ext>(pub(crate) u32, PhantomData<Ext>);
+pub struct OCR<Ext>(pub(crate) u32, pub(crate) PhantomData<Ext>);
 impl<Ext> From<R3> for OCR<Ext> {
     fn from(resp: R3) -> Self {
         Self(resp.ocr, PhantomData)
@@ -786,96 +779,264 @@ impl<Ext> CSD<Ext> {
     }
 }
 
-/// Card Status (R1)
+pub trait CardInIdleState {
+    fn card_in_idle_state(&self) -> bool;
+}
+
+impl<T: CardStatus> CardInIdleState for T {
+    fn card_in_idle_state(&self) -> bool {
+        matches!(self.state(), CurrentState::Idle)
+    }
+}
+
+pub trait CardStatus: CardInIdleState {
+    /// Command's argument was out of range
+    fn out_of_range(&self) -> bool;
+    /// Misaligned address
+    fn address_error(&self) -> bool;
+    /// Block len error
+    fn block_len_error(&self) -> bool;
+    /// Error in the erase commands sequence
+    fn erase_seq_error(&self) -> bool;
+    /// Invalid selection of blocks for erase
+    fn erase_param(&self) -> bool;
+    /// Host attempted to write to protected area
+    fn wp_violation(&self) -> bool;
+    /// Card is locked by the host
+    fn card_is_locked(&self) -> bool;
+    /// Password error
+    fn lock_unlock_failed(&self) -> bool;
+    /// Crc check of previous command failed
+    fn com_crc_error(&self) -> bool;
+    /// Command is not legal for the card state
+    fn illegal_command(&self) -> bool;
+    /// Card internal ECC failed
+    fn card_ecc_failed(&self) -> bool;
+    /// Internal controller error
+    fn cc_error(&self) -> bool;
+    /// A General error occurred
+    fn error(&self) -> bool;
+    /// CSD error
+    fn csd_overwrite(&self) -> bool;
+    /// Some blocks where skipped while erasing
+    fn wp_erase_skip(&self) -> bool;
+    /// Erase sequence was aborted
+    fn erase_reset(&self) -> bool;
+    /// Current card state
+    fn state(&self) -> CurrentState;
+    /// Corresponds to buffer empty signaling on the bus
+    fn ready_for_data(&self) -> bool;
+    /// The card will accept a ACMD
+    fn app_cmd(&self) -> bool;
+}
+
+/// Card Status register
 ///
 /// Error and state information of an executed command
 ///
 /// Ref PLSS_v7_10 Section 4.10.1
 #[derive(Clone, Copy)]
-pub struct CardStatus<Ext>(pub(crate) u32, PhantomData<Ext>);
+pub struct CardStatusRegister<Ext>(pub(crate) u32, pub(crate) PhantomData<Ext>);
 
-impl<Ext> From<R1> for CardStatus<Ext> {
+impl<Ext> From<R1> for CardStatusRegister<Ext> {
     fn from(resp: R1) -> Self {
         Self(resp.status, PhantomData)
     }
 }
 
-impl<Ext> CardStatus<Ext> {
+impl<Ext> CardStatusRegister<Ext> {
+    pub const OUT_OF_RANGE: u32 =       0b1000_0000_0000_0000_0000_0000_0000_0000;
+    pub const ADDRESS_ERROR: u32 =      0b0100_0000_0000_0000_0000_0000_0000_0000;
+    pub const BLOCK_LEN_ERROR: u32 =    0b0010_0000_0000_0000_0000_0000_0000_0000;
+    pub const ERASE_SEQ_ERROR: u32 =    0b0001_0000_0000_0000_0000_0000_0000_0000;
+    pub const ERASE_PARAM: u32 =        0b0000_1000_0000_0000_0000_0000_0000_0000;
+    pub const WP_VIOLATION: u32 =       0b0000_0100_0000_0000_0000_0000_0000_0000;
+    pub const CARD_IS_LOCKED: u32 =     0b0000_0010_0000_0000_0000_0000_0000_0000;
+    pub const LOCK_UNLOCK_FAILED: u32 = 0b0000_0001_0000_0000_0000_0000_0000_0000;
+    pub const COM_CRC_ERROR: u32 =      0b0000_0000_1000_0000_0000_0000_0000_0000;
+    pub const ILLEGAL_COMMAND: u32 =    0b0000_0000_0100_0000_0000_0000_0000_0000;
+    pub const CARD_ECC_FAILED: u32 =    0b0000_0000_0010_0000_0000_0000_0000_0000;
+    pub const CC_ERROR: u32 =           0b0000_0000_0001_0000_0000_0000_0000_0000;
+    pub const ERROR: u32 =              0b0000_0000_0000_1000_0000_0000_0000_0000;
+    pub const CSD_OVERWRITE: u32 =      0b0000_0000_0000_0001_0000_0000_0000_0000;
+    pub const WP_ERASE_SKIP: u32 =      0b0000_0000_0000_0000_1000_0000_0000_0000;
+    pub const CARD_ECC_DISABLED: u32 =  0b0000_0000_0000_0000_0100_0000_0000_0000;
+    pub const ERASE_RESET: u32 =        0b0000_0000_0000_0000_0010_0000_0000_0000;
+    pub const READY_FOR_DATA: u32 =     0b0000_0000_0000_0000_0000_0001_0000_0000;
+    pub const FX_EVENT: u32 =           0b0000_0000_0000_0000_0000_0000_0100_0000;
+    pub const APP_CMD: u32 =            0b0000_0000_0000_0000_0000_0000_0010_0000;
+    pub const AKE_SEQ_ERROR: u32 =      0b0000_0000_0000_0000_0000_0000_0000_1000;
+    pub const STATE_BITS_MASK: u32 =    0b0000_0000_0000_0000_0001_1110_0000_0000;
+}
+
+impl<Ext> core::ops::BitOr for CardStatusRegister<Ext> {
+    type Output = CardStatusRegister<Ext>;
+    fn bitor(self, rhs: Self) -> Self::Output {
+        CardStatusRegister(self.0 | rhs.0, PhantomData)
+    }
+}
+
+impl<Ext> core::ops::BitOrAssign for CardStatusRegister<Ext> {
+    fn bitor_assign(&mut self, rhs: Self) {
+        *self = CardStatusRegister(self.0 | rhs.0, PhantomData)
+    }
+}
+
+impl CardStatus for R1 {
     /// Command's argument was out of range
-    pub fn out_of_range(&self) -> bool {
-        self.0 & 0x8000_0000 != 0
+    fn out_of_range(&self) -> bool {
+        self.status & CardStatusRegister::<()>::OUT_OF_RANGE != 0
     }
     /// Misaligned address
-    pub fn address_error(&self) -> bool {
-        self.0 & 0x4000_0000 != 0
+    fn address_error(&self) -> bool {
+        self.status & CardStatusRegister::<()>::ADDRESS_ERROR != 0
     }
     /// Block len error
-    pub fn block_len_error(&self) -> bool {
-        self.0 & 0x2000_0000 != 0
+    fn block_len_error(&self) -> bool {
+        self.status & CardStatusRegister::<()>::BLOCK_LEN_ERROR != 0
     }
     /// Error in the erase commands sequence
-    pub fn erase_seq_error(&self) -> bool {
-        self.0 & 0x1000_0000 != 0
+    fn erase_seq_error(&self) -> bool {
+        self.status & CardStatusRegister::<()>::ERASE_SEQ_ERROR != 0
     }
     /// Invalid selection of blocks for erase
-    pub fn erase_param(&self) -> bool {
-        self.0 & 0x800_0000 != 0
+    fn erase_param(&self) -> bool {
+        self.status & CardStatusRegister::<()>::ERASE_PARAM != 0
     }
     /// Host attempted to write to protected area
-    pub fn wp_violation(&self) -> bool {
-        self.0 & 0x400_0000 != 0
+    fn wp_violation(&self) -> bool {
+        self.status & CardStatusRegister::<()>::WP_VIOLATION != 0
     }
     /// Card is locked by the host
-    pub fn card_is_locked(&self) -> bool {
-        self.0 & 0x200_0000 != 0
+    fn card_is_locked(&self) -> bool {
+        self.status & CardStatusRegister::<()>::CARD_IS_LOCKED != 0
     }
     /// Password error
-    pub fn lock_unlock_failed(&self) -> bool {
-        self.0 & 0x100_0000 != 0
+    fn lock_unlock_failed(&self) -> bool {
+        self.status & CardStatusRegister::<()>::LOCK_UNLOCK_FAILED != 0
     }
     /// Crc check of previous command failed
-    pub fn com_crc_error(&self) -> bool {
-        self.0 & 0x80_0000 != 0
+    fn com_crc_error(&self) -> bool {
+        self.status & CardStatusRegister::<()>::COM_CRC_ERROR != 0
     }
     /// Command is not legal for the card state
-    pub fn illegal_command(&self) -> bool {
-        self.0 & 0x40_0000 != 0
+    fn illegal_command(&self) -> bool {
+        self.status & CardStatusRegister::<()>::ILLEGAL_COMMAND != 0
     }
     /// Card internal ECC failed
-    pub fn card_ecc_failed(&self) -> bool {
-        self.0 & 0x20_0000 != 0
+    fn card_ecc_failed(&self) -> bool {
+        self.status & CardStatusRegister::<()>::CARD_ECC_FAILED != 0
     }
     /// Internal controller error
-    pub fn cc_error(&self) -> bool {
-        self.0 & 0x10_0000 != 0
+    fn cc_error(&self) -> bool {
+        self.status & CardStatusRegister::<()>::CC_ERROR != 0
     }
     /// A General error occurred
-    pub fn error(&self) -> bool {
-        self.0 & 0x8_0000 != 0
+    fn error(&self) -> bool {
+        self.status & CardStatusRegister::<()>::ERROR != 0
     }
     /// CSD error
-    pub fn csd_overwrite(&self) -> bool {
-        self.0 & 0x1_0000 != 0
+    fn csd_overwrite(&self) -> bool {
+        self.status & CardStatusRegister::<()>::CSD_OVERWRITE != 0
     }
     /// Some blocks where skipped while erasing
-    pub fn wp_erase_skip(&self) -> bool {
-        self.0 & 0x8000 != 0
+    fn wp_erase_skip(&self) -> bool {
+        self.status & CardStatusRegister::<()>::WP_ERASE_SKIP != 0
     }
     /// Erase sequence was aborted
-    pub fn erase_reset(&self) -> bool {
-        self.0 & 0x2000 != 0
+    fn erase_reset(&self) -> bool {
+        self.status & CardStatusRegister::<()>::ERASE_RESET != 0
     }
     /// Current card state
-    pub fn state(&self) -> CurrentState {
-        CurrentState::from(((self.0 >> 9) & 0xF) as u8)
+    fn state(&self) -> CurrentState {
+        CurrentState::from(((self.status & CardStatusRegister::<()>::STATE_BITS_MASK) >> 9) as u8)
     }
     /// Corresponds to buffer empty signaling on the bus
-    pub fn ready_for_data(&self) -> bool {
-        self.0 & 0x100 != 0
+    fn ready_for_data(&self) -> bool {
+        self.status & CardStatusRegister::<()>::READY_FOR_DATA != 0
     }
     /// The card will accept a ACMD
-    pub fn app_cmd(&self) -> bool {
-        self.0 & 0x20 != 0
+    fn app_cmd(&self) -> bool {
+        self.status & CardStatusRegister::<()>::APP_CMD != 0
+    }
+}
+
+impl<Ext> CardStatus for CardStatusRegister<Ext> {
+    /// Command's argument was out of range
+    fn out_of_range(&self) -> bool {
+        self.0 & Self::OUT_OF_RANGE != 0
+    }
+    /// Misaligned address
+    fn address_error(&self) -> bool {
+        self.0 & Self::ADDRESS_ERROR != 0
+    }
+    /// Block len error
+    fn block_len_error(&self) -> bool {
+        self.0 & Self::BLOCK_LEN_ERROR != 0
+    }
+    /// Error in the erase commands sequence
+    fn erase_seq_error(&self) -> bool {
+        self.0 & Self::ERASE_SEQ_ERROR != 0
+    }
+    /// Invalid selection of blocks for erase
+    fn erase_param(&self) -> bool {
+        self.0 & Self::ERASE_PARAM != 0
+    }
+    /// Host attempted to write to protected area
+    fn wp_violation(&self) -> bool {
+        self.0 & Self::WP_VIOLATION != 0
+    }
+    /// Card is locked by the host
+    fn card_is_locked(&self) -> bool {
+        self.0 & Self::CARD_IS_LOCKED != 0
+    }
+    /// Password error
+    fn lock_unlock_failed(&self) -> bool {
+        self.0 & Self::LOCK_UNLOCK_FAILED != 0
+    }
+    /// Crc check of previous command failed
+    fn com_crc_error(&self) -> bool {
+        self.0 & Self::COM_CRC_ERROR != 0
+    }
+    /// Command is not legal for the card state
+    fn illegal_command(&self) -> bool {
+        self.0 & Self::ILLEGAL_COMMAND != 0
+    }
+    /// Card internal ECC failed
+    fn card_ecc_failed(&self) -> bool {
+        self.0 & Self::CARD_ECC_FAILED != 0
+    }
+    /// Internal controller error
+    fn cc_error(&self) -> bool {
+        self.0 & Self::CC_ERROR != 0
+    }
+    /// A General error occurred
+    fn error(&self) -> bool {
+        self.0 & Self::ERROR != 0
+    }
+    /// CSD error
+    fn csd_overwrite(&self) -> bool {
+        self.0 & Self::CSD_OVERWRITE != 0
+    }
+    /// Some blocks where skipped while erasing
+    fn wp_erase_skip(&self) -> bool {
+        self.0 & Self::WP_ERASE_SKIP != 0
+    }
+    /// Erase sequence was aborted
+    fn erase_reset(&self) -> bool {
+        self.0 & Self::ERASE_RESET != 0
+    }
+    /// Current card state
+    fn state(&self) -> CurrentState {
+        CurrentState::from(((self.0 & Self::STATE_BITS_MASK) >> 9) as u8)
+    }
+    /// Corresponds to buffer empty signaling on the bus
+    fn ready_for_data(&self) -> bool {
+        self.0 & Self::READY_FOR_DATA != 0
+    }
+    /// The card will accept a ACMD
+    fn app_cmd(&self) -> bool {
+        self.0 & Self::APP_CMD != 0
     }
 }
 

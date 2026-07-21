@@ -5,8 +5,9 @@ use embedded_hal_async::delay::DelayNs;
 
 pub use crate::common::*;
 use crate::{
-    Acquirable, Addressable, BlockCommand, BlockDevice, BlockReadCommand, BusAdapter, BusWidth,
-    Command, CommandIndex, ControlCommand, MmcBus, MmcError, R1, R1b, R3, SdMode, common, spi,
+    Acquirable, Addressable, AddressableBlockDevice, BlockCommand, BlockDevice, BlockReadCommand,
+    BusAdapter, BusWidth, Command, CommandIndex, ControlCommand, MmcBus, MmcError, R1, R1b, R3,
+    SdMode, common, spi,
 };
 
 use core::{convert::TryInto, fmt, marker::PhantomData, str};
@@ -35,7 +36,7 @@ impl Command<spi::SpiMode> for Cmd1 {
         self.ocr
     }
 }
-impl<M> ControlCommand<M> for Cmd1 {}
+impl<M> ControlCommand<M> for Cmd1 where Self: Command<M> {}
 
 /// CMD3 — ASSIGN_RELATIVE_ADDR (RCA)
 pub struct Cmd3 {
@@ -109,7 +110,7 @@ impl Command<spi::SpiMode> for Cmd6 {
             | (self.cmd_set as u32)
     }
 }
-impl<M> ControlCommand<M> for Cmd6 {}
+impl<M> ControlCommand<M> for Cmd6 where Self: Command<M> {}
 
 /// Specifies a method of modifying a field of EXT_CSD. Used for CMD6.
 pub enum AccessMode {
@@ -148,14 +149,17 @@ impl<'a> Command<SdMode> for Cmd8<'a> {
 }
 impl<'a> Command<spi::SpiMode> for Cmd8<'a> {
     type Resp<'b>
-        = R1
+        = spi::R1
     where
         Self: 'b;
     fn arg(&self) -> u32 {
         0
     }
 }
-impl<'a, M> BlockCommand<M> for Cmd8<'a> {
+impl<'a, M> BlockCommand<M> for Cmd8<'a>
+where
+    Self: Command<M>,
+{
     type Block = Aligned<A4, [u8; 512]>;
     fn block_count(&self) -> u32 {
         1
@@ -164,7 +168,7 @@ impl<'a, M> BlockCommand<M> for Cmd8<'a> {
         core::slice::from_mut(self.buf)
     }
 }
-impl<'a, M> BlockReadCommand<M> for Cmd8<'a> {}
+impl<'a, M> BlockReadCommand<M> for Cmd8<'a> where Self: Command<M> {}
 
 /// CMD8: Device sends its EXT_CSD register as a block of data.
 pub fn send_ext_csd(ext_csd: &mut ExtCSD) -> Cmd8<'_> {
@@ -402,7 +406,7 @@ impl fmt::Debug for CSD<EMMC> {
     }
 }
 
-impl CardStatus<EMMC> {
+impl CardStatusRegister<EMMC> {
     /// If set, the Device did not switch to the expected mode as requested by the SWITCH command
     pub fn switch_error(&self) -> bool {
         self.0 & 0x80 != 0
@@ -414,7 +418,7 @@ impl CardStatus<EMMC> {
         self.0 & 0x40 != 0
     }
 }
-impl fmt::Debug for CardStatus<EMMC> {
+impl fmt::Debug for CardStatusRegister<EMMC> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Card Status")
             .field("Out of range error", &self.out_of_range())
@@ -549,9 +553,10 @@ pub struct Emmc {
     pub ext_csd: ExtCSD,
 }
 
-impl Addressable for Emmc {
-    type Ext = EMMC;
-
+impl<Mode> Addressable<Mode> for Emmc
+where
+    Emmc: Acquirable<Mode>,
+{
     /// Is this a standard or high capacity peripheral?
     fn get_capacity(&self) -> CardCapacity {
         if self.ocr.access_mode() == 0b10 {
@@ -574,8 +579,23 @@ impl Addressable for Emmc {
     }
 }
 
-impl Acquirable for Emmc {
-    async fn acquire<B: MmcBus, D: DelayNs>(
+impl Acquirable<SdMode> for Emmc
+where
+    Cmd1: Command<SdMode> + ControlCommand<SdMode>,
+    Cmd2: Command<SdMode> + ControlCommand<SdMode>,
+    Cmd3: Command<SdMode> + ControlCommand<SdMode>,
+    Cmd6: Command<SdMode> + ControlCommand<SdMode>,
+    for<'all> Cmd8<'all>: Command<SdMode> + BlockCommand<SdMode>,
+    Cmd9: Command<SdMode> + ControlCommand<SdMode>,
+    Cmd13: Command<SdMode>,
+    OCR<EMMC>: for<'all> From<<Cmd1 as Command<SdMode>>::Resp<'all>>,
+    CID<EMMC>: for<'all> From<<Cmd2 as Command<SdMode>>::Resp<'all>>,
+    CSD<EMMC>: for<'all> From<<Cmd9 as Command<SdMode>>::Resp<'all>>,
+    CardStatusRegister<EMMC>: for<'all> From<<Cmd13 as Command<SdMode>>::Resp<'all>>,
+{
+    type Ext = EMMC;
+    type SendOpCond = Cmd1;
+    async fn acquire<B: MmcBus<Mode = SdMode>, D: DelayNs>(
         bus: &mut BusAdapter<B, D>,
         block_size: BlockSize,
         bus_width: BusWidth,
@@ -591,7 +611,7 @@ impl Acquirable for Emmc {
         let access_mode = 0b10 << 29;
         let op_cond = high_voltage | access_mode | 0b1_1111_1111 << 15;
 
-        this.ocr = bus.get_ocr(&send_op_cond(op_cond), false).await?;
+        this.ocr = bus.get_ready(&send_op_cond(op_cond), false).await?.into();
 
         this.cid = bus
             .send_command(common::all_send_cid(), false)
@@ -628,8 +648,70 @@ impl Acquirable for Emmc {
     }
 }
 
+impl Acquirable<spi::SpiMode> for Emmc
+where
+    Cmd1: Command<spi::SpiMode> + ControlCommand<spi::SpiMode>,
+    Cmd6: Command<spi::SpiMode> + ControlCommand<spi::SpiMode>,
+    for<'all> Cmd8<'all>: Command<spi::SpiMode> + BlockCommand<spi::SpiMode>,
+    for<'all> spi::Cmd9<'all>: Command<spi::SpiMode> + BlockReadCommand<spi::SpiMode>,
+    common::Cmd13: Command<spi::SpiMode>,
+    OCR<EMMC>: for<'all> From<<Cmd1 as Command<spi::SpiMode>>::Resp<'all>>,
+    for<'all> <common::Cmd13 as Command<spi::SpiMode>>::Resp<'all>: CardStatus,
+{
+    type Ext = EMMC;
+    type SendOpCond = Cmd1;
+    async fn acquire<B: MmcBus<Mode = spi::SpiMode>, D: DelayNs>(
+        bus: &mut BusAdapter<B, D>,
+        block_size: BlockSize,
+        bus_width: BusWidth,
+        freq: u32,
+    ) -> Result<(Self, u32), MmcError> {
+        let mut this = Self::default();
+
+        if matches!(block_size, BlockSize::B512) {
+            return Err(MmcError::BlockSize);
+        }
+
+        if matches!(bus_width, BusWidth::W1) {
+            return Err(MmcError::BusWidth);
+        }
+
+        let high_voltage = 0b0 << 7;
+        let access_mode = 0b10 << 29;
+        let op_cond = high_voltage | access_mode | 0b1_1111_1111 << 15;
+
+        this.ocr = bus.get_ready(&send_op_cond(op_cond), false).await?.into();
+
+        // CMD9 — read CSD
+        let mut buf = aligned::Aligned([0xFFu8; _]);
+        bus.read_blocks(spi::send_csd(&mut buf), false, false)
+            .await?;
+        this.csd = CSD::from(u128::from_ne_bytes(*buf));
+
+        let widbus = match bus_width {
+            BusWidth::W1 => 0,
+            BusWidth::W4 => 1,
+            BusWidth::W8 => 2,
+        };
+
+        bus.send_command(modify_ext_csd(AccessMode::WriteByte, 183, widbus), false)
+            .await?;
+
+        bus.bus.set_bus(bus_width, freq)?;
+
+        bus.read_blocks(send_ext_csd(&mut this.ext_csd), false, false)
+            .await?;
+
+        Ok((this, freq))
+    }
+}
+
 /// Card Storage Device
-impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Emmc, B, D, BLOCK_SIZE> {
+impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Emmc, B, D, BLOCK_SIZE>
+where
+    Emmc: Addressable<B::Mode>,
+    Self: AddressableBlockDevice<Emmc, B, D, BLOCK_SIZE>,
+{
     /// Create a new SD card
     pub async fn new_emmc(bus: B, freq: u32, delay: D) -> Result<Self, MmcError> {
         Self::new(bus, delay, freq).await

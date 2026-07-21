@@ -119,15 +119,16 @@ pub trait Response: Sized {
     /// Parse the response from words
     fn from_words(buf: &Self::Words) -> Self;
 
-    fn to_result(self) -> Result<(), MmcError> {
-        Ok(())
+    fn to_result(self) -> Result<Self, MmcError> {
+        Ok(self)
     }
 }
 
 pub trait ResponseWords:
     AsRef<[Self::Word]>
-    + core::ops::Index<usize, Output = Self::Word>
+    + core::ops::IndexMut<usize, Output = Self::Word>
     + core::ops::Index<core::ops::RangeFull, Output = [Self::Word]>
+    + FromBytes
 {
     /// The basic element parsed for the response
     type Word;
@@ -141,6 +142,32 @@ pub trait ResponseWords:
 
 pub trait ResponseLenBytes {
     fn bytes(&self) -> usize;
+}
+
+pub trait FromBytes: Sized {
+    const SIZE: usize = size_of::<Self>();
+    fn from_bytes<const N: usize>(bytes: [u8; N]) -> Self;
+}
+
+impl<const W: usize> FromBytes for [u8; W] {
+    const SIZE: usize = W;
+    fn from_bytes<const N: usize>(bytes: [u8; N]) -> Self {
+        core::array::from_fn(|i| bytes.get(i).copied().unwrap_or(0x00u8))
+    }
+}
+
+impl<const W: usize> FromBytes for [u32; W] {
+    const SIZE: usize = W * size_of::<u32>();
+    fn from_bytes<const N: usize>(bytes: [u8; N]) -> Self {
+        let (chunks, _) = bytes.as_chunks();
+        core::array::from_fn(|i| chunks.get(i).copied().map_or(0u32, u32::from_ne_bytes))
+    }
+}
+
+/// This trait is used to identify responses that can be used to determine when the card is ready for
+/// commands during the power-up sequence
+pub trait PowerUpReady: Response {
+    fn ready(&self) -> bool;
 }
 
 /// Marker struct for indicating the SD protocol in commands.
@@ -229,17 +256,17 @@ pub trait ByteCommand<M>: Command<M> {
 }
 
 /// ControlCommand: commands with no data transfer (CMD0, CMD8, CMD55, etc.)
-pub trait ControlCommand<M>: Command<M> {}
+pub trait ControlCommand<Mode>: Command<Mode> {}
 
 /// BlockReadCommand: block-mode read (CMD17, CMD18)
 ///
 /// This is a marker trait to prevent incorrect method calls with these commands.
-pub trait BlockReadCommand<M>: BlockCommand<M> {}
+pub trait BlockReadCommand<Mode>: BlockCommand<Mode> {}
 
 /// BlockWriteCommand: block-mode write (CMD24, CMD25)
 ///
 /// This is a marker trait to prevent incorrect method calls with these commands.
-pub trait BlockWriteCommand<M>: BlockCommand<M> {}
+pub trait BlockWriteCommand<Mode>: BlockCommand<Mode> {}
 
 /// ByteReadCommand: byte-mode read (CMD53 byte read)
 ///
@@ -457,6 +484,12 @@ impl ResponseWords for [(); 0] {
     const LEN: Self::Len = ResponseLen::Zero;
 }
 
+impl FromBytes for [(); 0] {
+    fn from_bytes<const N: usize>(_: [u8; N]) -> Self {
+        []
+    }
+}
+
 impl ResponseWords for [u32; 1] {
     type Word = u32;
     type Len = ResponseLen;
@@ -503,31 +536,48 @@ pub enum CardState {
     Reserved(u8), // 8–15
 }
 
-/// Error bits defined in SD Physical Spec §4.10.1 (Table 4-41).
+/// Error types defined in SD Physical Spec §4.10.1 (Table 4-41).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum CardError {
+    /// The argument used for a command was out of the allowed range.
+    OutOfRange,
+    /// Used a misaligned address which doesn't match the block length.
     AddressError,
+    /// The requested block length is not allowed, or the number of transferred bytes does not match the block length.
     BlockLenError,
+    /// An invalid sequence of erase commands was used.
     EraseSeqError,
+    /// Used an invalid range of write blocks for an erase command.
     EraseParamError,
+    /// A write attempt was blocked by write protection.
     WriteProtViolation,
+    /// An invalid lock or unlock command sequence or password was used.
     LockUnlockFailed,
+    /// The crc check for the previous command failed.
     ComCrcError,
+    /// An invalid command for the current card state was used.
     IllegalCommand,
+    /// Ecc was applied but failed to correct the data.
     CardEccFailed,
+    /// An internal card-controller error.
     CcError,
+    /// A general or unspecified error.
     Error,
+    /// An error was identified in the CID or CSD data.
     CidCsdOverwrite,
+    /// An attempted erase of write protected blocks was skipped.
     WpEraseSkip,
+    /// An erase sequence was reset due to an invalid command being used.
     EraseReset,
 }
 
 impl CardError {
-    pub const ADDRESS_ERROR: u32 = 1 << 31;
-    pub const BLOCK_LEN_ERROR: u32 = 1 << 30;
-    pub const ERASE_SEQ_ERROR: u32 = 1 << 29;
-    pub const ERASE_PARAM_ERROR: u32 = 1 << 28;
+    pub const OUT_OF_RANGE: u32 = 1 << 31;
+    pub const ADDRESS_ERROR: u32 = 1 << 30;
+    pub const BLOCK_LEN_ERROR: u32 = 1 << 29;
+    pub const ERASE_SEQ_ERROR: u32 = 1 << 28;
+    pub const ERASE_PARAM_ERROR: u32 = 1 << 27;
     pub const WP_VIOLATION: u32 = 1 << 26;
     pub const LOCK_UNLOCK_FAILED: u32 = 1 << 24;
     pub const COM_CRC_ERROR: u32 = 1 << 23;
@@ -539,7 +589,8 @@ impl CardError {
     pub const WP_ERASE_SKIP: u32 = 1 << 15;
     pub const ERASE_RESET: u32 = 1 << 13;
 
-    pub const ALL: u32 = Self::ADDRESS_ERROR
+    pub const ALL: u32 = Self::OUT_OF_RANGE
+        | Self::ADDRESS_ERROR
         | Self::BLOCK_LEN_ERROR
         | Self::ERASE_SEQ_ERROR
         | Self::ERASE_PARAM_ERROR
@@ -562,6 +613,7 @@ impl CardError {
 
         // isolate lowest set bit
         match bits & (!bits + 1) {
+            Self::OUT_OF_RANGE => Some(Self::OutOfRange),
             Self::ADDRESS_ERROR => Some(Self::AddressError),
             Self::BLOCK_LEN_ERROR => Some(Self::BlockLenError),
             Self::ERASE_SEQ_ERROR => Some(Self::EraseSeqError),
@@ -616,10 +668,10 @@ impl Response for R1 {
         R1 { status: buf[0] }
     }
 
-    fn to_result(self) -> Result<(), MmcError> {
+    fn to_result(self) -> Result<Self, MmcError> {
         match CardError::from_bits(self.status) {
             Some(e) => Err(MmcError::Card(e)),
-            None => Ok(()),
+            None => Ok(self),
         }
     }
 }
@@ -650,6 +702,10 @@ impl Response for R1b {
     fn from_words(buf: &Self::Words) -> Self {
         R1b { status: buf[0] }
     }
+
+    fn to_result(self) -> Result<Self, MmcError> {
+        self.to_response().to_result().and(Ok(self))
+    }
 }
 
 /// R2 — CID/CSD (136-bit)
@@ -676,6 +732,7 @@ impl Response for R2 {
 ///
 /// 48-bit, *no CRC*, no busy
 /// Used during initialization before CRC is enabled.
+#[derive(Clone, Copy)]
 pub struct R3 {
     pub ocr: u32,
 }
@@ -688,6 +745,15 @@ impl Response for R3 {
     #[inline]
     fn from_words(buf: &Self::Words) -> Self {
         R3 { ocr: buf[0] }
+    }
+}
+
+impl PowerUpReady for R3
+where
+    OCR<sd::SD>: From<Self>,
+{
+    fn ready(&self) -> bool {
+        !OCR::<sd::SD>::from(*self).is_busy()
     }
 }
 
@@ -745,6 +811,7 @@ impl Response for R7 {
 ///
 /// 48-bit, *no CRC*, no busy
 /// Returned by CMD5 (IO_SEND_OP_COND)
+#[derive(Clone, Copy)]
 pub struct R4 {
     pub ocr: u32,
 }
@@ -760,6 +827,15 @@ impl Response for R4 {
     }
 }
 
+impl PowerUpReady for R4
+where
+    OCR<sdio::SDIO>: From<Self>,
+{
+    fn ready(&self) -> bool {
+        !OCR::<sdio::SDIO>::from(*self).is_busy()
+    }
+}
+
 /// R5 — SDIO Direct I/O response
 ///
 /// 48-bit, CRC-checked, no busy
@@ -767,6 +843,16 @@ impl Response for R4 {
 pub struct R5 {
     pub flags: u8,
     pub data: u8,
+}
+
+pub trait SdioData {
+    fn data(&self) -> u8;
+}
+
+impl SdioData for R5 {
+    fn data(&self) -> u8 {
+        self.data
+    }
 }
 
 /// Error bits defined in SDIO Simplified Specification
@@ -830,10 +916,10 @@ impl Response for R5 {
         }
     }
 
-    fn to_result(self) -> Result<(), MmcError> {
+    fn to_result(self) -> Result<Self, MmcError> {
         match SdioError::from_bits(self.flags) {
             Some(e) => Err(MmcError::Sdio(e)),
-            None => Ok(()),
+            None => Ok(self),
         }
     }
 }
@@ -845,7 +931,10 @@ pub trait TuningOp {
     /// Otherwise:
     ///     - If `Ok(true)`, the tap is considered acceptable
     ///     - If `Ok(false)`, the tap is not considered acceptable.
-    fn exec<B: MmcBus>(&mut self, bus: &mut B) -> impl Future<Output = Result<bool, MmcError>>;
+    fn exec<B: MmcBus<Mode = SdMode>>(
+        &mut self,
+        bus: &mut B,
+    ) -> impl Future<Output = Result<bool, MmcError>>;
 }
 
 // Allow passing some commands by reference
@@ -907,7 +996,11 @@ struct BusAdapter<B: MmcBus, D: DelayNs> {
     pub rca: u16,
 }
 
-impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
+impl<B: MmcBus, D: DelayNs> BusAdapter<B, D>
+where
+    common::Cmd13: ControlCommand<B::Mode>,
+    for<'all> <common::Cmd13 as Command<B::Mode>>::Resp<'all>: CardStatus,
+{
     /// Send the app command notification if this is an app command
     async fn app_cmd(&mut self, app_cmd: bool) -> Result<(), MmcError>
     where
@@ -917,23 +1010,19 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
             self.bus
                 .send_command(sd::app_cmd(self.rca))
                 .await?
-                .to_result()?
+                .to_result()?;
         }
 
         Ok(())
     }
 
     /// Check whether the card is ready for data
-    async fn check_card(&mut self) -> bool
-    where
-        common::Cmd13: ControlCommand<B::Mode>,
-        CardStatus<()>: for<'all> From<<common::Cmd13 as Command<B::Mode>>::Resp<'all>>,
-    {
+    async fn check_card(&mut self) -> bool {
         if let Ok(status) = self
             .bus
             .send_command(common::card_status(self.rca, false))
             .await
-            && CardStatus::from(status).ready_for_data()
+            && CardStatus::ready_for_data(&status)
         {
             true
         } else {
@@ -942,11 +1031,7 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     }
 
     /// Wait for the card to be ready if required
-    async fn wait_if_required<R: Response>(&mut self) -> Result<(), MmcError>
-    where
-        common::Cmd13: ControlCommand<B::Mode>,
-        CardStatus<()>: for<'all> From<<common::Cmd13 as Command<B::Mode>>::Resp<'all>>,
-    {
+    async fn wait_if_required<R: Response>(&mut self) -> Result<(), MmcError> {
         if !R::BUSY {
             return Ok(());
         }
@@ -967,7 +1052,7 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     pub async fn init_idle(&mut self) -> Result<(), MmcError>
     where
         common::Cmd0: ControlCommand<B::Mode>,
-        common::Cmd13: ControlCommand<B::Mode>,
+        common::Cmd55: ControlCommand<B::Mode>,
     {
         // While the SD/SDIO card or eMMC is in identification mode,
         // the SDMMC_CK frequency must be no more than 400 kHz.
@@ -988,6 +1073,7 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     pub async fn select_card(&mut self, rca: Option<u16>) -> Result<(), MmcError>
     where
         common::Cmd7: ControlCommand<B::Mode>,
+        common::Cmd55: ControlCommand<B::Mode>,
     {
         match self
             .send_command(common::select_card(rca.unwrap_or(0)), false)
@@ -998,23 +1084,22 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
         }
     }
 
-    /// Get the ocr with the provided command
-    pub async fn get_ocr<'a, C: ControlCommand<B::Mode> + 'a, Ext>(
+    /// Wait for the card to report the ready-state with the provided command
+    pub async fn get_ready<'a, C: ControlCommand<B::Mode> + 'a>(
         &mut self,
         cmd: &'a C,
         app_cmd: bool,
-    ) -> Result<OCR<Ext>, MmcError>
+    ) -> Result<<C as Command<B::Mode>>::Resp<'a>, MmcError>
     where
-        OCR<Ext>: From<<C as Command<B::Mode>>::Resp<'a>>,
+        <C as Command<B::Mode>>::Resp<'a>: PowerUpReady,
+        common::Cmd55: ControlCommand<B::Mode>,
     {
-        // Wait up to 750ms + cmd time for ready after R1b response
-        // Note: this is a rather simplistic timeout loop. It can be improved later.
+        // Wait up to 750ms for ready (in SD mode) / idle state (in SPI mode)
         for _ in 0..750 {
-            let ocr: OCR<Ext> = self.send_command(cmd, app_cmd).await?.into();
-
-            if !ocr.is_busy() {
+            let res = self.send_command(cmd, app_cmd).await?;
+            if res.ready() {
                 // Power up done
-                return Ok(ocr);
+                return Ok(res);
             }
 
             self.delay.delay_ms(1).await;
@@ -1032,8 +1117,7 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
         app_cmd: bool,
     ) -> Result<C::Resp<'a>, MmcError>
     where
-        common::Cmd13: ControlCommand<B::Mode>,
-        CardStatus<()>: for<'all> From<<common::Cmd13 as Command<B::Mode>>::Resp<'all>>,
+        common::Cmd55: ControlCommand<B::Mode>,
     {
         self.app_cmd(app_cmd).await?;
         let res = self.bus.send_command(cmd).await?;
@@ -1047,12 +1131,15 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     /// Provide `Some(rca)` to execute this as an app cmd.
     ///
     /// Do not call this method for CMD53. Instead, call the underlying bus method.
-    pub async fn read_blocks<'a, C: BlockReadCommand + 'a>(
+    pub async fn read_blocks<'a, C: BlockReadCommand<B::Mode> + 'a>(
         &mut self,
         cmd: C,
         auto_stop: bool,
         app_cmd: bool,
-    ) -> Result<C::Resp<'a>, MmcError> {
+    ) -> Result<C::Resp<'a>, MmcError>
+    where
+        common::Cmd55: ControlCommand<B::Mode>,
+    {
         self.app_cmd(app_cmd).await?;
         let res = self.bus.read_blocks(cmd, auto_stop).await?;
         self.wait_if_required::<C::Resp<'a>>().await?;
@@ -1065,12 +1152,15 @@ impl<B: MmcBus, D: DelayNs> BusAdapter<B, D> {
     /// Provide `Some(rca)` to execute this as an app cmd.
     ///
     /// Do not call this method for CMD53. Instead, call the underlying bus method.
-    pub async fn write_blocks<'a, C: BlockWriteCommand + 'a>(
+    pub async fn write_blocks<'a, C: BlockWriteCommand<B::Mode> + 'a>(
         &mut self,
         cmd: C,
         auto_stop: bool,
         app_cmd: bool,
-    ) -> Result<C::Resp<'a>, MmcError> {
+    ) -> Result<C::Resp<'a>, MmcError>
+    where
+        common::Cmd55: ControlCommand<B::Mode>,
+    {
         self.app_cmd(app_cmd).await?;
         let res = self.bus.write_blocks(cmd, auto_stop).await?;
         self.wait_if_required::<C::Resp<'a>>().await?;
@@ -1118,9 +1208,13 @@ impl Signalling {
 }
 
 /// Represents either an SD or EMMC card
-trait Acquirable: Sized + Clone + Default {
-    // Acquire a storage device from an initialized idle bus
-    fn acquire<B: MmcBus, D: DelayNs>(
+trait Acquirable<Mode>: Sized + Clone + Default {
+    /// Ext marker type for OCR, CSD, etc.
+    type Ext;
+    /// The Send Op Cond cmd type (used by the get_ready fn) for this card
+    type SendOpCond: Command<Mode> + ControlCommand<Mode>;
+    /// Acquire a storage device from an initialized idle bus
+    fn acquire<B: MmcBus<Mode = Mode>, D: DelayNs>(
         bus: &mut BusAdapter<B, D>,
         block_size: BlockSize,
         bus_width: BusWidth,
@@ -1130,10 +1224,7 @@ trait Acquirable: Sized + Clone + Default {
 
 /// Represents either an SD or EMMC card
 #[allow(private_bounds)]
-pub trait Addressable: Acquirable {
-    /// Associated type
-    type Ext;
-
+pub trait Addressable<Mode>: Acquirable<Mode> {
     /// Is this a standard or high capacity peripheral?
     fn get_capacity(&self) -> CardCapacity;
 
@@ -1151,7 +1242,7 @@ pub trait Addressable: Acquirable {
 pub type DefaultBlockDevice<T, B, D> = BlockDevice<T, B, D, 512>;
 
 /// Represents a block storage device
-pub struct BlockDevice<T: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> {
+pub struct BlockDevice<T: Addressable<B::Mode>, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> {
     info: T,
     freq: u32,
     error: bool,
@@ -1159,19 +1250,67 @@ pub struct BlockDevice<T: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: 
 }
 
 /// Card or Emmc storage device
-impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
-    BlockDevice<A, B, D, BLOCK_SIZE>
+pub trait AddressableBlockDevice<
+    CardType: Addressable<B::Mode>,
+    B: MmcBus,
+    D: DelayNs,
+    const BLOCK_SIZE: usize,
+>: Sized
 {
     /// Create a new block device
-    pub async fn new(bus: B, delay: D, freq: u32) -> Result<Self, MmcError> {
+    fn new(bus: B, delay: D, freq: u32) -> impl Future<Output = Result<Self, MmcError>>;
+    /// Create a new uninit block device
+    fn new_uninit(bus: B, delay: D) -> Self;
+    /// Reacquire the device
+    fn reacquire(&mut self, freq: u32) -> impl Future<Output = Result<(), MmcError>>;
+    fn card(&self) -> &CardType;
+    fn freq(&self) -> u32;
+    fn get_addr(&self, block_idx: u32) -> u32;
+    fn read_block<'a>(
+        &mut self,
+        block_idx: u32,
+        block: &'a mut Aligned<A4, [u8; BLOCK_SIZE]>,
+    ) -> impl Future<Output = Result<(), MmcError>>;
+    fn read_blocks(
+        &mut self,
+        block_idx: u32,
+        blocks: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
+    ) -> impl Future<Output = Result<(), MmcError>>;
+    fn write_block(
+        &mut self,
+        block_idx: u32,
+        block: &mut Aligned<A4, [u8; BLOCK_SIZE]>,
+    ) -> impl Future<Output = Result<(), MmcError>>;
+    fn write_blocks(
+        &mut self,
+        block_idx: u32,
+        blocks: &mut [Aligned<A4, [u8; BLOCK_SIZE]>],
+    ) -> impl Future<Output = Result<(), MmcError>>;
+}
+
+impl<A: Addressable<B::Mode>, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
+    AddressableBlockDevice<A, B, D, BLOCK_SIZE> for BlockDevice<A, B, D, BLOCK_SIZE>
+where
+    common::Cmd0: ControlCommand<B::Mode>,
+    common::Cmd55: ControlCommand<B::Mode>,
+    common::Cmd12: ControlCommand<B::Mode>,
+    common::Cmd13: ControlCommand<B::Mode>,
+    for<'all> <common::Cmd13 as Command<B::Mode>>::Resp<'all>: CardStatus,
+    for<'all> common::Cmd17<'all, BLOCK_SIZE>: ControlCommand<B::Mode>,
+    for<'all> common::Cmd18<'all, BLOCK_SIZE>: BlockReadCommand<B::Mode>,
+    for<'all> sd::Acmd23: ControlCommand<B::Mode>,
+    sd::Cmd23: Command<B::Mode> + ControlCommand<B::Mode>,
+    for<'all> common::Cmd24<'all, BLOCK_SIZE>: Command<B::Mode> + BlockWriteCommand<B::Mode>,
+    for<'all> common::Cmd25<'all, BLOCK_SIZE>: Command<B::Mode> + BlockWriteCommand<B::Mode>,
+{
+    async fn new(bus: B, delay: D, freq: u32) -> Result<Self, MmcError> {
         let mut this = Self::new_uninit(bus, delay);
         this.reacquire(freq).await?;
 
         Ok(this)
     }
 
-    /// Create a new uninit block device
-    pub fn new_uninit(bus: B, delay: D) -> Self {
+    fn new_uninit(bus: B, delay: D) -> Self {
         Self {
             info: A::default(),
             freq: 0,
@@ -1180,8 +1319,7 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
         }
     }
 
-    /// Reacquire the device
-    pub async fn reacquire(&mut self, freq: u32) -> Result<(), MmcError> {
+    async fn reacquire(&mut self, freq: u32) -> Result<(), MmcError> {
         // Clamp the frequency to the supported bus frequency.
         let freq = freq.clamp(0, self.bus.bus.supports_frequency());
         let bus_width = self.bus.bus.supports_bus_width();
@@ -1195,13 +1333,13 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
 
     /// Get the card info
     #[inline]
-    pub const fn card(&self) -> &A {
+    fn card(&self) -> &A {
         &self.info
     }
 
     /// Get the card frequency
     #[inline]
-    pub const fn freq(&self) -> u32 {
+    fn freq(&self) -> u32 {
         self.freq
     }
 
@@ -1215,10 +1353,10 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
 
     /// Read a data block.
     #[inline]
-    async fn read_block(
+    async fn read_block<'a>(
         &mut self,
         block_idx: u32,
-        block: &mut Aligned<A4, [u8; BLOCK_SIZE]>,
+        block: &'a mut Aligned<A4, [u8; BLOCK_SIZE]>,
     ) -> Result<(), MmcError> {
         self.bus
             .read_blocks(
@@ -1279,7 +1417,6 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
                 false,
             )
             .await?
-            .to_response()
             .to_result()?;
 
         Ok(())
@@ -1316,7 +1453,6 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
                 false,
             )
             .await?
-            .to_response()
             .to_result()?;
 
         if !supports_cmd23 && !supports_auto_stop {
@@ -1327,8 +1463,14 @@ impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
     }
 }
 
-impl<A: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
+impl<A: Addressable<B::Mode>, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
     block_device::BlockDevice<BLOCK_SIZE> for BlockDevice<A, B, D, BLOCK_SIZE>
+where
+    BlockDevice<A, B, D, BLOCK_SIZE>: AddressableBlockDevice<A, B, D, BLOCK_SIZE>,
+    common::Cmd12: Command<B::Mode>,
+    common::Cmd13: Command<B::Mode>,
+    for<'all> <common::Cmd13 as Command<B::Mode>>::Resp<'all>: CardStatus,
+    common::Cmd55: ControlCommand<B::Mode>,
 {
     type Align = A4;
     type Error = MmcError;
