@@ -744,6 +744,12 @@ impl<Ext> From<u128> for CSD<Ext> {
         Self(inner, PhantomData)
     }
 }
+impl<Ext> From<[u8; 16]> for CSD<Ext> {
+    fn from(bytes: [u8; 16]) -> Self {
+        let inner = u128::from_ne_bytes(bytes);
+        Self(inner, PhantomData)
+    }
+}
 /// From little endian words
 impl<Ext> From<R2> for CSD<Ext> {
     fn from(resp: R2) -> Self {
