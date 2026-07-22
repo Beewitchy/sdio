@@ -5,7 +5,7 @@ use embedded_hal_async::delay::DelayNs;
 
 pub use crate::common::*;
 use crate::{
-    Acquirable, Addressable, AddressableBlockDevice, BlockCommand, BlockDevice, BlockReadCommand,
+    Acquirable, AcquirableBlockDevice, Addressable, BlockCommand, BlockDevice, BlockReadCommand,
     BusAdapter, BusWidth, Command, CommandIndex, ControlCommand, MmcBus, MmcError, R1, R3, R6, R7,
     Response as _, SdMode, Signalling, TuningOp, common, sd, spi,
 };
@@ -1096,10 +1096,7 @@ pub struct Card {
     pub status: SDStatus,
 }
 
-impl<Mode> Addressable<Mode> for Card
-where
-    Card: Acquirable<Mode>,
-{
+impl Addressable for Card {
     /// Is this a standard or high capacity peripheral?
     fn get_capacity(&self) -> CardCapacity {
         if self.ocr.high_capacity() {
@@ -1371,17 +1368,15 @@ impl Card {
 impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLOCK_SIZE>
 where
     Card: Acquirable<B::Mode>,
-    Self: AddressableBlockDevice<Card, B, D, BLOCK_SIZE>,
+    Self: AcquirableBlockDevice<Card, B, D, BLOCK_SIZE>,
 {
     /// Create a new SD card
-    pub async fn new_sd_card(bus: B, freq: u32, delay: D) -> Result<Self, MmcError>
-    {
+    pub async fn new_sd_card(bus: B, freq: u32, delay: D) -> Result<Self, MmcError> {
         Self::new(bus, delay, freq).await
     }
 
     /// Create a uninit SD card
-    pub fn new_uninit_sd_card(bus: B, delay: D) -> Self
-    {
+    pub fn new_uninit_sd_card(bus: B, delay: D) -> Self {
         Self::new_uninit(bus, delay)
     }
 }

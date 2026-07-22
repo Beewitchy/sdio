@@ -1223,8 +1223,7 @@ trait Acquirable<Mode>: Sized + Clone + Default {
 }
 
 /// Represents either an SD or EMMC card
-#[allow(private_bounds)]
-pub trait Addressable<Mode>: Acquirable<Mode> {
+pub trait Addressable {
     /// Is this a standard or high capacity peripheral?
     fn get_capacity(&self) -> CardCapacity;
 
@@ -1242,7 +1241,7 @@ pub trait Addressable<Mode>: Acquirable<Mode> {
 pub type DefaultBlockDevice<T, B, D> = BlockDevice<T, B, D, 512>;
 
 /// Represents a block storage device
-pub struct BlockDevice<T: Addressable<B::Mode>, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> {
+pub struct BlockDevice<T: Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> {
     info: T,
     freq: u32,
     error: bool,
@@ -1250,8 +1249,9 @@ pub struct BlockDevice<T: Addressable<B::Mode>, B: MmcBus, D: DelayNs, const BLO
 }
 
 /// Card or Emmc storage device
-pub trait AddressableBlockDevice<
-    CardType: Addressable<B::Mode>,
+#[allow(private_bounds)]
+pub trait AcquirableBlockDevice<
+    CardType: Acquirable<B::Mode>,
     B: MmcBus,
     D: DelayNs,
     const BLOCK_SIZE: usize,
@@ -1288,8 +1288,8 @@ pub trait AddressableBlockDevice<
     ) -> impl Future<Output = Result<(), MmcError>>;
 }
 
-impl<A: Addressable<B::Mode>, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
-    AddressableBlockDevice<A, B, D, BLOCK_SIZE> for BlockDevice<A, B, D, BLOCK_SIZE>
+impl<A: Acquirable<B::Mode> + Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
+    AcquirableBlockDevice<A, B, D, BLOCK_SIZE> for BlockDevice<A, B, D, BLOCK_SIZE>
 where
     common::Cmd0: ControlCommand<B::Mode>,
     common::Cmd55: ControlCommand<B::Mode>,
@@ -1463,10 +1463,10 @@ where
     }
 }
 
-impl<A: Addressable<B::Mode>, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
+impl<A: Acquirable<B::Mode> + Addressable, B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize>
     block_device::BlockDevice<BLOCK_SIZE> for BlockDevice<A, B, D, BLOCK_SIZE>
 where
-    BlockDevice<A, B, D, BLOCK_SIZE>: AddressableBlockDevice<A, B, D, BLOCK_SIZE>,
+    Self: AcquirableBlockDevice<A, B, D, BLOCK_SIZE>,
     common::Cmd12: Command<B::Mode>,
     common::Cmd13: Command<B::Mode>,
     for<'all> <common::Cmd13 as Command<B::Mode>>::Resp<'all>: CardStatus,

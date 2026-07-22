@@ -5,7 +5,7 @@ use embedded_hal_async::delay::DelayNs;
 
 pub use crate::common::*;
 use crate::{
-    Acquirable, Addressable, AddressableBlockDevice, BlockCommand, BlockDevice, BlockReadCommand,
+    Acquirable, Addressable, AcquirableBlockDevice, BlockCommand, BlockDevice, BlockReadCommand,
     BusAdapter, BusWidth, Command, CommandIndex, ControlCommand, MmcBus, MmcError, R1, R1b, R3,
     SdMode, common, spi,
 };
@@ -553,9 +553,7 @@ pub struct Emmc {
     pub ext_csd: ExtCSD,
 }
 
-impl<Mode> Addressable<Mode> for Emmc
-where
-    Emmc: Acquirable<Mode>,
+impl Addressable for Emmc
 {
     /// Is this a standard or high capacity peripheral?
     fn get_capacity(&self) -> CardCapacity {
@@ -707,10 +705,11 @@ where
 }
 
 /// Card Storage Device
+#[allow(private_bounds)]
 impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Emmc, B, D, BLOCK_SIZE>
 where
-    Emmc: Addressable<B::Mode>,
-    Self: AddressableBlockDevice<Emmc, B, D, BLOCK_SIZE>,
+    Emmc: Acquirable<B::Mode>,
+    Self: AcquirableBlockDevice<Emmc, B, D, BLOCK_SIZE>,
 {
     /// Create a new SD card
     pub async fn new_emmc(bus: B, freq: u32, delay: D) -> Result<Self, MmcError> {

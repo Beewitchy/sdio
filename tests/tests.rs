@@ -6,7 +6,7 @@ use sdio::common::{BlockSize, CSD, OCR, RCA};
 use sdio::emmc::EMMC;
 use sdio::sd::{Card, SD, SDStatus};
 use sdio::{
-    AddressableBlockDevice, BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand,
+    AcquirableBlockDevice, BlockReadCommand, BlockWriteCommand, BusWidth, ByteReadCommand,
     ByteWriteCommand, CardError, ControlCommand, FromBytes as _, MmcBus, MmcError, R3, R6,
     Response, SdMode, block_device::BlockDevice as _,
 };
@@ -451,8 +451,7 @@ const BLOCK_SIZE: usize = 512;
 const CARD_BYTES: usize = 16 * 1024; // 16 KiB fake card
 
 /// Helper to create a fresh block device
-async fn make_device() -> BlockDevice<Card, DummyMmcBus, NoopDelay, BLOCK_SIZE>
-{
+async fn make_device() -> BlockDevice<Card, DummyMmcBus, NoopDelay, BLOCK_SIZE> {
     let bus = DummyMmcBus::new(CARD_BYTES);
     let delay = NoopDelay;
     BlockDevice::<Card, DummyMmcBus, _, _>::new_sd_card(bus, 400_000, delay)
@@ -630,9 +629,10 @@ async fn test_set_block_length_uses_byte_count() {
     // not the BlockSize enum discriminant.
     let bus = DummyMmcBus::new(CARD_BYTES);
     let state = bus.state();
-    let mut dev = BlockDevice::<Card, DummyMmcBus, _, BLOCK_SIZE>::new_sd_card(bus, INIT_FREQ, NoopDelay)
-        .await
-        .unwrap();
+    let mut dev =
+        BlockDevice::<Card, DummyMmcBus, _, BLOCK_SIZE>::new_sd_card(bus, INIT_FREQ, NoopDelay)
+            .await
+            .unwrap();
 
     let mut block = Aligned([0u8; BLOCK_SIZE]);
     dev.read(0, std::slice::from_mut(&mut block)).await.unwrap();
@@ -677,9 +677,10 @@ async fn test_sd_status_erase_size_combines_bytes() {
         st.sd_status[12] = 0x34; // high byte
     }
 
-    let dev = BlockDevice::<Card, DummyMmcBus, _, BLOCK_SIZE>::new_sd_card(bus, INIT_FREQ, NoopDelay)
-        .await
-        .unwrap();
+    let dev =
+        BlockDevice::<Card, DummyMmcBus, _, BLOCK_SIZE>::new_sd_card(bus, INIT_FREQ, NoopDelay)
+            .await
+            .unwrap();
 
     assert_eq!(dev.card().status.erase_size(), 0x1234);
 }
