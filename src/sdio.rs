@@ -439,7 +439,7 @@ where
         // supports but does not begin powering up.
         let inquiry: common::OCR<SDIO> = self
             .bus
-            .send_command(io_send_op_cond(false, 0x0), false)
+            .send_command(io_send_op_cond(false, 0x0))
             .await?
             .into();
 
@@ -454,7 +454,7 @@ where
         }
         self.ocr = self
             .bus
-            .get_ready(&io_send_op_cond(false, window), false)
+            .get_ready(&io_send_op_cond(false, window))
             .await?
             .into();
 
@@ -586,7 +586,6 @@ where
                     addr,
                     data: 0,
                 },
-                false,
             )
             .await?;
         Ok(resp.to_result()?.data())
@@ -604,7 +603,6 @@ where
                     addr,
                     data,
                 },
-                false,
             )
             .await?;
 
@@ -630,7 +628,6 @@ where
                     addr,
                     data,
                 },
-                false,
             )
             .await?;
 

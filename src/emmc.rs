@@ -609,20 +609,20 @@ where
         let access_mode = 0b10 << 29;
         let op_cond = high_voltage | access_mode | 0b1_1111_1111 << 15;
 
-        this.ocr = bus.get_ready(&send_op_cond(op_cond), false).await?.into();
+        this.ocr = bus.get_ready(&send_op_cond(op_cond)).await?.into();
 
         this.cid = bus
-            .send_command(common::all_send_cid(), false)
+            .send_command(common::all_send_cid())
             .await?
             .into();
 
         bus.rca = 1u16;
 
-        bus.send_command(assign_relative_address(bus.rca), false)
+        bus.send_command(assign_relative_address(bus.rca))
             .await?;
 
         this.csd = bus
-            .send_command(common::send_csd(bus.rca), false)
+            .send_command(common::send_csd(bus.rca))
             .await?
             .into();
 
@@ -634,12 +634,12 @@ where
             BusWidth::W8 => 2,
         };
 
-        bus.send_command(modify_ext_csd(AccessMode::WriteByte, 183, widbus), false)
+        bus.send_command(modify_ext_csd(AccessMode::WriteByte, 183, widbus))
             .await?;
 
         bus.bus.set_bus(bus_width, freq)?;
 
-        bus.read_blocks(send_ext_csd(&mut this.ext_csd), false, false)
+        bus.read_blocks(send_ext_csd(&mut this.ext_csd), false)
             .await?;
 
         Ok((this, freq))
@@ -678,11 +678,11 @@ where
         let access_mode = 0b10 << 29;
         let op_cond = high_voltage | access_mode | 0b1_1111_1111 << 15;
 
-        this.ocr = bus.get_ready(&send_op_cond(op_cond), false).await?.into();
+        this.ocr = bus.get_ready(&send_op_cond(op_cond)).await?.into();
 
         // CMD9 — read CSD
         let mut buf = aligned::Aligned([0xFFu8; _]);
-        bus.read_blocks(spi::send_csd(&mut buf), false, false)
+        bus.read_blocks(spi::send_csd(&mut buf), false)
             .await?;
         this.csd = CSD::from(u128::from_ne_bytes(*buf));
 
@@ -692,12 +692,12 @@ where
             BusWidth::W8 => 2,
         };
 
-        bus.send_command(modify_ext_csd(AccessMode::WriteByte, 183, widbus), false)
+        bus.send_command(modify_ext_csd(AccessMode::WriteByte, 183, widbus))
             .await?;
 
         bus.bus.set_bus(bus_width, freq)?;
 
-        bus.read_blocks(send_ext_csd(&mut this.ext_csd), false, false)
+        bus.read_blocks(send_ext_csd(&mut this.ext_csd), false)
             .await?;
 
         Ok((this, freq))

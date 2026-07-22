@@ -374,6 +374,7 @@ pub struct Acmd6 {
 }
 impl CommandIndex for Acmd6 {
     const INDEX: u8 = 6;
+    const ALWAYS_APP: bool = true;
 }
 impl Command<SdMode> for Acmd6 {
     type Resp<'a> = R1;
@@ -394,6 +395,7 @@ pub struct Acmd13<'a> {
 }
 impl<'a> CommandIndex for Acmd13<'a> {
     const INDEX: u8 = 13;
+    const ALWAYS_APP: bool = true;
 }
 impl<'a> Command<SdMode> for Acmd13<'a> {
     type Resp<'b>
@@ -442,6 +444,7 @@ pub struct Acmd23 {
 }
 impl CommandIndex for Acmd23 {
     const INDEX: u8 = 23;
+    const ALWAYS_APP: bool = true;
 }
 impl Command<SdMode> for Acmd23 {
     type Resp<'a> = R1;
@@ -474,6 +477,7 @@ pub struct Acmd41 {
 }
 impl CommandIndex for Acmd41 {
     const INDEX: u8 = 41;
+    const ALWAYS_APP: bool = true;
 }
 impl Command<SdMode> for Acmd41 {
     type Resp<'a> = R3;
@@ -512,6 +516,7 @@ pub struct Acmd51<'a> {
     pub inner: &'a mut Aligned<A4, [u8; 8]>,
 }
 impl<'a> CommandIndex for Acmd51<'a> {
+    const ALWAYS_APP: bool = true;
     const INDEX: u8 = 51;
 }
 impl<'a> Command<SdMode> for Acmd51<'a> {
@@ -1142,7 +1147,7 @@ where
         pub type CIC = R7;
 
         // CMD8 — check voltage + pattern
-        let cic: CIC = bus.send_command(send_if_cond(1, 0xAA), false).await?;
+        let cic: CIC = bus.send_command(send_if_cond(1, 0xAA)).await?;
         if cic.check_pattern != 0xAA || (cic.voltage & 1) == 0 {
             return Err(MmcError::Voltage);
         }
@@ -1150,8 +1155,7 @@ where
         // ACMD41 — negotiate OCR (with S18A if host supports 1.8V)
         this.ocr = bus
             .get_ready(
-                &sd_send_op_cond(true, false, bus.bus.supports_1v8(), 1 << 5),
-                true,
+                &sd_send_op_cond(true, false, bus.bus.supports_1v8(), 1 << 5)
             )
             .await?
             .into();
@@ -1163,22 +1167,22 @@ where
         // card while it's in the ready state. Doing the switch later
         // (e.g. after CMD2/CMD3) makes CMD11 time out.
         if bus.bus.supports_1v8() && this.ocr.v18_allowed() {
-            bus.send_command(voltage_switch(), false).await?;
+            bus.send_command(voltage_switch()).await?;
         }
 
         // CMD2 — read CID
         this.cid = bus
-            .send_command(common::all_send_cid(), false)
+            .send_command(common::all_send_cid())
             .await?
             .into();
 
         // CMD3 — get RCA
         bus.rca =
-            RCA::<SD>::from(bus.send_command(send_relative_address(), false).await?).address();
+            RCA::<SD>::from(bus.send_command(send_relative_address()).await?).address();
 
         // CMD9 — read CSD (must be ≤25 MHz, 1-bit)
         this.csd = bus
-            .send_command(common::send_csd(bus.rca), false)
+            .send_command(common::send_csd(bus.rca))
             .await?
             .into();
 
@@ -1186,7 +1190,7 @@ where
         bus.select_card(Some(bus.rca)).await?;
 
         // ACMD51 — read SCR (must be ≤25 MHz, 1-bit)
-        bus.read_blocks(sd::send_scr(&mut this.scr), false, true)
+        bus.read_blocks(sd::send_scr(&mut this.scr), false)
             .await?;
 
         // ACMD6 — set bus width BEFORE high-speed signalling switch
@@ -1195,7 +1199,7 @@ where
             _ => (BusWidth::W1, false),
         };
 
-        bus.send_command(set_bus_width(bw4bit), true).await?;
+        bus.send_command(set_bus_width(bw4bit)).await?;
 
         // Up to 25Mhz
         bus.bus.set_bus(bus_width, freq.min(25_000_000))?;
@@ -1216,7 +1220,7 @@ where
         }
 
         if bus
-            .send_command(common::card_status(bus.rca, false), false)
+            .send_command(common::card_status(bus.rca, false))
             .await?
             .state()
             != CurrentState::Transfer
@@ -1225,11 +1229,11 @@ where
         }
 
         // ACMD13 — SD Status (after signalling switch)
-        bus.read_blocks(sd::sd_status(&mut this.status), false, true)
+        bus.read_blocks(sd::sd_status(&mut this.status), false)
             .await?;
 
         // CMD16 — set block length
-        bus.send_command(set_block_length(block_size.len() as u32), false)
+        bus.send_command(set_block_length(block_size.len() as u32))
             .await?
             .to_result()?;
 
@@ -1264,40 +1268,40 @@ where
         pub type CIC = spi::R7;
 
         // CMD8 — check voltage + pattern
-        let cic: CIC = bus.send_command(send_if_cond(1, 0xAA), false).await?;
+        let cic: CIC = bus.send_command(send_if_cond(1, 0xAA)).await?;
         if cic.check_pattern != 0xAA || (cic.voltage & 1) == 0 {
             return Err(MmcError::Voltage);
         }
 
         // ACMD41 — negotiate OCR (with S18A if host supports 1.8V)
-        bus.get_ready(&spi::sd_send_op_cond(true), true).await?;
+        bus.get_ready(&spi::sd_send_op_cond(true)).await?;
 
-        this.ocr = bus.send_command(read_ocr(), false).await?.into();
+        this.ocr = bus.send_command(read_ocr()).await?.into();
 
         // CMD10 — send CID
         let mut buf = aligned::Aligned([0xFFu8; _]);
-        bus.read_blocks(spi::send_cid(&mut buf), false, false)
+        bus.read_blocks(spi::send_cid(&mut buf), false)
             .await?;
         this.cid = CID::from(*buf);
 
         // CMD9 — read CSD
         let mut buf = aligned::Aligned([0xFFu8; _]);
-        bus.read_blocks(spi::send_csd(&mut buf), false, false)
+        bus.read_blocks(spi::send_csd(&mut buf), false)
             .await?;
         this.csd = CSD::from(u128::from_ne_bytes(*buf));
 
         // ACMD51 — read SCR
-        bus.read_blocks(sd::send_scr(&mut this.scr), false, true)
+        bus.read_blocks(sd::send_scr(&mut this.scr), false)
             .await?;
 
         bus.bus.set_bus(BusWidth::W1, freq.min(25_000_000))?;
 
-        bus.send_command(spi::card_status(), false)
+        bus.send_command(spi::card_status())
             .await?
             .to_result()?;
 
         // ACMD13 — SD Status
-        bus.read_blocks(sd::sd_status(&mut this.status), false, true)
+        bus.read_blocks(sd::sd_status(&mut this.status), false)
             .await?;
 
         Ok((this, freq))
@@ -1336,7 +1340,7 @@ impl Card {
                 Signalling::SDR12 => 0xFF_FF00,
             };
 
-        bus.read_blocks(cmd6(set_function, buf), false, false)
+        bus.read_blocks(cmd6(set_function, buf), false)
             .await?;
 
         // Host is allowed to use the new functions at least 8

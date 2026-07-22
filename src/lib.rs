@@ -179,6 +179,10 @@ pub trait CommandIndex {
     /// The fixed command index (e.g., 17 for CMD17).
     const INDEX: u8;
 
+    /// True if the implementing command should always be sent
+    /// in the App-cmd mode
+    const ALWAYS_APP: bool = false;
+
     /// The fixed command index (e.g., 17 for CMD17).
     fn index(&self) -> u8 {
         Self::INDEX
@@ -212,6 +216,14 @@ pub trait Command<Mode>: CommandIndex {
     fn arg(&self) -> u32 {
         0
     }
+
+    /// Indicates if this command should be sent in app-cmd mode.
+    ///
+    /// This function is an optional runtime override--most commands
+    /// can just implement the [CommandIndex::ALWAYS_APP] constant.
+    fn app(&self) -> bool {
+        Self::ALWAYS_APP
+    }
 }
 
 pub trait BlockBuffer:
@@ -244,6 +256,18 @@ pub trait BlockCommand<M>: Command<M> {
     /// must be `BLOCK_SIZE`, and there must be `block_count()` total
     /// buffers in the slice
     fn buf(&mut self) -> &mut [Self::Block];
+}
+
+pub trait EnterState<M>: Command<M> {
+    type EnterCmd: ControlCommand<M>;
+
+    fn enter_state<A: Addressable>(&self, card: &A) -> Option<Self::EnterCmd>;
+}
+
+pub trait LeaveState<M>: Command<M> {
+    type LeaveCmd: ControlCommand<M>;
+
+    fn leave_state<A: Addressable>(&self, card: &A) -> Option<Self::LeaveCmd>;
 }
 
 /// Byte mode: arbitrary byte counts (CMD53 byte mode, SPI multi-byte)
@@ -1061,7 +1085,7 @@ where
         // Wait 74 cycles
         self.delay.delay_us(74_000_000 / INIT_FREQ).await;
 
-        self.send_command(common::idle(), false).await?;
+        self.send_command(common::idle()).await?;
 
         Ok(())
     }
@@ -1076,7 +1100,7 @@ where
         common::Cmd55: ControlCommand<B::Mode>,
     {
         match self
-            .send_command(common::select_card(rca.unwrap_or(0)), false)
+            .send_command(common::select_card(rca.unwrap_or(0)))
             .await
         {
             Err(MmcError::Timeout) if rca.is_none() => Ok(()),
@@ -1088,7 +1112,6 @@ where
     pub async fn get_ready<'a, C: ControlCommand<B::Mode> + 'a>(
         &mut self,
         cmd: &'a C,
-        app_cmd: bool,
     ) -> Result<<C as Command<B::Mode>>::Resp<'a>, MmcError>
     where
         <C as Command<B::Mode>>::Resp<'a>: PowerUpReady,
@@ -1096,7 +1119,7 @@ where
     {
         // Wait up to 750ms for ready (in SD mode) / idle state (in SPI mode)
         for _ in 0..750 {
-            let res = self.send_command(cmd, app_cmd).await?;
+            let res = self.send_command(cmd).await?;
             if res.ready() {
                 // Power up done
                 return Ok(res);
@@ -1114,12 +1137,11 @@ where
     pub async fn send_command<'a, C: ControlCommand<B::Mode> + 'a>(
         &mut self,
         cmd: C,
-        app_cmd: bool,
     ) -> Result<C::Resp<'a>, MmcError>
     where
         common::Cmd55: ControlCommand<B::Mode>,
     {
-        self.app_cmd(app_cmd).await?;
+        self.app_cmd(cmd.app()).await?;
         let res = self.bus.send_command(cmd).await?;
         self.wait_if_required::<C::Resp<'a>>().await?;
 
@@ -1135,12 +1157,11 @@ where
         &mut self,
         cmd: C,
         auto_stop: bool,
-        app_cmd: bool,
     ) -> Result<C::Resp<'a>, MmcError>
     where
         common::Cmd55: ControlCommand<B::Mode>,
     {
-        self.app_cmd(app_cmd).await?;
+        self.app_cmd(cmd.app()).await?;
         let res = self.bus.read_blocks(cmd, auto_stop).await?;
         self.wait_if_required::<C::Resp<'a>>().await?;
 
@@ -1156,12 +1177,11 @@ where
         &mut self,
         cmd: C,
         auto_stop: bool,
-        app_cmd: bool,
     ) -> Result<C::Resp<'a>, MmcError>
     where
         common::Cmd55: ControlCommand<B::Mode>,
     {
-        self.app_cmd(app_cmd).await?;
+        self.app_cmd(cmd.app()).await?;
         let res = self.bus.write_blocks(cmd, auto_stop).await?;
         self.wait_if_required::<C::Resp<'a>>().await?;
 
@@ -1362,7 +1382,6 @@ where
             .read_blocks(
                 read_single_block(self.get_addr(block_idx), block),
                 false,
-                false,
             )
             .await?
             .to_result()?;
@@ -1382,7 +1401,7 @@ where
 
         if supports_cmd23 {
             self.bus
-                .send_command(sd::set_block_count(blocks.len() as u32), false)
+                .send_command(sd::set_block_count(blocks.len() as u32))
                 .await?
                 .to_result()?;
         }
@@ -1391,13 +1410,12 @@ where
             .read_blocks(
                 read_multiple_blocks(self.get_addr(block_idx), blocks),
                 !supports_cmd23 && supports_auto_stop,
-                false,
             )
             .await?
             .to_result()?;
 
         if !supports_cmd23 && !supports_auto_stop {
-            self.bus.send_command(stop_transmission(), false).await?;
+            self.bus.send_command(stop_transmission()).await?;
         }
 
         Ok(())
@@ -1413,7 +1431,6 @@ where
         self.bus
             .write_blocks(
                 write_single_block(self.get_addr(block_idx), block),
-                false,
                 false,
             )
             .await?
@@ -1431,7 +1448,7 @@ where
     ) -> Result<(), MmcError> {
         if self.info.supports_acmd23() {
             self.bus
-                .send_command(sd::set_wr_blk_erase_count(blocks.len() as u32), true)
+                .send_command(sd::set_wr_blk_erase_count(blocks.len() as u32))
                 .await?
                 .to_result()?;
         }
@@ -1441,7 +1458,7 @@ where
 
         if supports_cmd23 {
             self.bus
-                .send_command(sd::set_block_count(blocks.len() as u32), false)
+                .send_command(sd::set_block_count(blocks.len() as u32))
                 .await?
                 .to_result()?;
         }
@@ -1450,13 +1467,12 @@ where
             .write_blocks(
                 write_multiple_blocks(self.get_addr(block_idx), blocks),
                 !supports_cmd23 && supports_auto_stop,
-                false,
             )
             .await?
             .to_result()?;
 
         if !supports_cmd23 && !supports_auto_stop {
-            self.bus.send_command(stop_transmission(), false).await?;
+            self.bus.send_command(stop_transmission()).await?;
         }
 
         Ok(())
@@ -1484,7 +1500,7 @@ where
         assert_eq!(BLOCK_SIZE % 4, 0);
 
         if self.error {
-            self.bus.send_command(stop_transmission(), false).await?;
+            self.bus.send_command(stop_transmission()).await?;
         }
 
         self.error = true;
@@ -1507,7 +1523,7 @@ where
         assert_eq!(BLOCK_SIZE % 4, 0);
 
         if self.error {
-            self.bus.send_command(stop_transmission(), false).await?;
+            self.bus.send_command(stop_transmission()).await?;
         }
 
         self.error = true;

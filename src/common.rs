@@ -6,8 +6,8 @@ use core::fmt::Debug;
 use aligned::{A4, Aligned};
 
 use crate::{
-    BlockCommand, BlockReadCommand, BlockWriteCommand, Command, CommandIndex, ControlCommand, R0,
-    R1, R1b, R2, R3, R4, R6, SdMode, spi,
+    Addressable, BlockCommand, BlockReadCommand, BlockWriteCommand, Command, CommandIndex,
+    ControlCommand, EnterState, LeaveState, R0, R1, R1b, R2, R3, R4, R6, SdMode, spi, sd,
 };
 
 // ============================================================================
@@ -145,7 +145,7 @@ pub fn stop_transmission() -> Cmd12 {
     Cmd12
 }
 
-pub type StopTransmission = Cmd2;
+pub type StopTransmission = Cmd12;
 
 /// CMD13 — SEND_STATUS
 pub struct Cmd13 {
@@ -305,6 +305,38 @@ impl<'a, const BLOCK_SIZE: usize, M> BlockReadCommand<M> for Cmd18<'a, BLOCK_SIZ
     Self: Command<M>
 {
 }
+impl<'a, const BLOCK_SIZE: usize> EnterState<SdMode> for Cmd18<'a, BLOCK_SIZE> where Self: Command<SdMode> {
+    type EnterCmd = crate::sd::Cmd23;
+    fn enter_state<A: Addressable>(&self, card: &A) -> Option<Self::EnterCmd> {
+        if card.supports_cmd23() {
+            Some(crate::sd::set_block_count(self.block_count()))
+        } else {
+            None
+        }
+    }
+}
+impl<'a, const BLOCK_SIZE: usize> LeaveState<SdMode> for Cmd18<'a, BLOCK_SIZE> where Self: Command<SdMode> {
+    type LeaveCmd = Cmd12;
+    fn leave_state<A: Addressable>(&self, card: &A) -> Option<Self::LeaveCmd> {
+        if card.supports_cmd23() {
+            None
+        } else {
+            Some(stop_transmission())
+        }
+    }
+}
+impl<'a, const BLOCK_SIZE: usize> EnterState<spi::SpiMode> for Cmd18<'a, BLOCK_SIZE> where Self: Command<spi::SpiMode> {
+    type EnterCmd = Cmd13;
+    fn enter_state<A: Addressable>(&self, _: &A) -> Option<Self::EnterCmd> {
+        None
+    }
+}
+impl<'a, const BLOCK_SIZE: usize> LeaveState<spi::SpiMode> for Cmd18<'a, BLOCK_SIZE> where Self: Command<spi::SpiMode> {
+    type LeaveCmd = Cmd12;
+    fn leave_state<A: Addressable>(&self, _: &A) -> Option<Self::LeaveCmd> {
+        Some(stop_transmission())
+    }
+}
 
 /// CMD18: Read multiple block from the card
 pub fn read_multiple_blocks<const BLOCK_SIZE: usize>(
@@ -352,7 +384,6 @@ where
         self.buf
     }
 }
-
 impl<'a, const BLOCK_SIZE: usize, M> BlockWriteCommand<M> for Cmd24<'a, BLOCK_SIZE> where
     Self: Command<M>
 {
@@ -411,6 +442,46 @@ where
 impl<'a, const BLOCK_SIZE: usize, M> BlockWriteCommand<M> for Cmd25<'a, BLOCK_SIZE> where
     Self: Command<M>
 {
+}
+impl<'a, const BLOCK_SIZE: usize> EnterState<SdMode> for Cmd25<'a, BLOCK_SIZE> where Self: Command<SdMode> {
+    type EnterCmd = sd::Acmd23;
+    fn enter_state<A: Addressable>(&self, card: &A) -> Option<Self::EnterCmd> {
+        if card.supports_acmd23() {
+            Some(sd::set_wr_blk_erase_count(self.block_count()))
+        } else {
+            None
+        }
+    }
+}
+impl<'a, const BLOCK_SIZE: usize> LeaveState<SdMode> for Cmd25<'a, BLOCK_SIZE> where Self: Command<SdMode> {
+    type LeaveCmd = Cmd12;
+    fn leave_state<A: Addressable>(&self, card: &A) -> Option<Self::LeaveCmd> {
+        if card.supports_acmd23() {
+            None
+        } else {
+            Some(stop_transmission())
+        }
+    }
+}
+impl<'a, const BLOCK_SIZE: usize> EnterState<spi::SpiMode> for Cmd25<'a, BLOCK_SIZE> where Self: Command<spi::SpiMode> {
+    type EnterCmd = sd::Acmd23;
+    fn enter_state<A: Addressable>(&self, card: &A) -> Option<Self::EnterCmd> {
+        if card.supports_acmd23() {
+            Some(sd::set_wr_blk_erase_count(self.block_count()))
+        } else {
+            None
+        }
+    }
+}
+impl<'a, const BLOCK_SIZE: usize> LeaveState<spi::SpiMode> for Cmd25<'a, BLOCK_SIZE> where Self: Command<spi::SpiMode> {
+    type LeaveCmd = Cmd12;
+    fn leave_state<A: Addressable>(&self, card: &A) -> Option<Self::LeaveCmd> {
+        if card.supports_acmd23() {
+            None
+        } else {
+            Some(stop_transmission())
+        }
+    }
 }
 
 /// CMD25: Write multiple blocks
