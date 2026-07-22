@@ -1296,7 +1296,7 @@ where
     common::Cmd12: ControlCommand<B::Mode>,
     common::Cmd13: ControlCommand<B::Mode>,
     for<'all> <common::Cmd13 as Command<B::Mode>>::Resp<'all>: CardStatus,
-    for<'all> common::Cmd17<'all, BLOCK_SIZE>: ControlCommand<B::Mode>,
+    for<'all> common::Cmd17<'all, BLOCK_SIZE>: BlockReadCommand<B::Mode>,
     for<'all> common::Cmd18<'all, BLOCK_SIZE>: BlockReadCommand<B::Mode>,
     for<'all> sd::Acmd23: ControlCommand<B::Mode>,
     sd::Cmd23: Command<B::Mode> + ControlCommand<B::Mode>,

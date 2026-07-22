@@ -789,7 +789,7 @@ impl<T: CardStatus> CardInIdleState for T {
     }
 }
 
-pub trait CardStatus: CardInIdleState {
+pub trait CardStatus {
     /// Command's argument was out of range
     fn out_of_range(&self) -> bool;
     /// Misaligned address

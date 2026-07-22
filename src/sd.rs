@@ -1361,18 +1361,21 @@ impl Card {
 }
 
 /// Card Storage Device
+#[allow(private_bounds)]
 impl<B: MmcBus, D: DelayNs, const BLOCK_SIZE: usize> BlockDevice<Card, B, D, BLOCK_SIZE>
 where
     Card: Acquirable<B::Mode>,
     Self: AddressableBlockDevice<Card, B, D, BLOCK_SIZE>,
 {
     /// Create a new SD card
-    pub async fn new_sd_card(bus: B, freq: u32, delay: D) -> Result<Self, MmcError> {
+    pub async fn new_sd_card(bus: B, freq: u32, delay: D) -> Result<Self, MmcError>
+    {
         Self::new(bus, delay, freq).await
     }
 
     /// Create a uninit SD card
-    pub fn new_uninit_sd_card(bus: B, delay: D) -> Self {
+    pub fn new_uninit_sd_card(bus: B, delay: D) -> Self
+    {
         Self::new_uninit(bus, delay)
     }
 }

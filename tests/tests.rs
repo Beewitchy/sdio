@@ -450,260 +450,260 @@ impl DelayNs for NoopDelay {
 const BLOCK_SIZE: usize = 512;
 const CARD_BYTES: usize = 16 * 1024; // 16 KiB fake card
 
-// /// Helper to create a fresh block device
-// async fn make_device() -> BlockDevice<Card, DummyMmcBus, NoopDelay, BLOCK_SIZE>
-// {
-//     let bus = DummyMmcBus::new(CARD_BYTES);
-//     let delay = NoopDelay;
-//     BlockDevice::new_sd_card(bus, 400_000, delay)
+/// Helper to create a fresh block device
+async fn make_device() -> BlockDevice<Card, DummyMmcBus, NoopDelay, BLOCK_SIZE>
+{
+    let bus = DummyMmcBus::new(CARD_BYTES);
+    let delay = NoopDelay;
+    BlockDevice::<Card, DummyMmcBus, _, _>::new_sd_card(bus, 400_000, delay)
+        .await
+        .expect("init failed")
+}
+
+#[tokio::test]
+async fn test_init() {
+    let mut dev = make_device().await;
+    assert!(dev.size().await.unwrap() > 0);
+}
+
+#[tokio::test]
+async fn test_read_zeroed_blocks() {
+    let mut dev = make_device().await;
+
+    let mut blocks = [Aligned([0u8; BLOCK_SIZE]); 1];
+    dev.read(0, &mut blocks).await.unwrap();
+
+    assert!(blocks[0].as_slice().iter().all(|&b| b == 0xFF));
+}
+
+// #[tokio::test]
+// async fn test_write_and_read_back() {
+//     let mut dev = make_device().await;
+//
+//     // Prepare data
+//     let mut write_block = Aligned([0u8; BLOCK_SIZE]);
+//     for (i, b) in write_block.as_mut_slice().iter_mut().enumerate() {
+//         *b = (i & 0xFF) as u8;
+//     }
+//
+//     // Write block 2
+//     dev.write(2, &[write_block]).await.unwrap();
+//
+//     // Read back
+//     let mut read_block = Aligned([0u8; BLOCK_SIZE]);
+//     dev.read(2, std::slice::from_mut(&mut read_block))
 //         .await
-//         .expect("init failed")
+//         .unwrap();
+//
+//     assert_eq!(write_block.as_slice(), read_block.as_slice());
 // }
 
 // #[tokio::test]
-// async fn test_init() {
+// async fn test_multi_block_rw() {
 //     let mut dev = make_device().await;
-//     assert!(dev.size().await.unwrap() > 0);
+//
+//     let write_blocks = [
+//         Aligned([1u8; BLOCK_SIZE]),
+//         Aligned([2u8; BLOCK_SIZE]),
+//         Aligned([3u8; BLOCK_SIZE]),
+//     ];
+//
+//     dev.write(4, &write_blocks).await.unwrap();
+//
+//     let mut read_blocks = [
+//         Aligned([0u8; BLOCK_SIZE]),
+//         Aligned([0u8; BLOCK_SIZE]),
+//         Aligned([0u8; BLOCK_SIZE]),
+//     ];
+//
+//     dev.read(4, &mut read_blocks).await.unwrap();
+//
+//     assert_eq!(read_blocks[0].as_slice(), &[1u8; BLOCK_SIZE]);
+//     assert_eq!(read_blocks[1].as_slice(), &[2u8; BLOCK_SIZE]);
+//     assert_eq!(read_blocks[2].as_slice(), &[3u8; BLOCK_SIZE]);
 // }
 
 // #[tokio::test]
-// async fn test_read_zeroed_blocks() {
+// async fn test_size_matches_card() {
 //     let mut dev = make_device().await;
-
-//     let mut blocks = [Aligned([0u8; BLOCK_SIZE]); 1];
-//     dev.read(0, &mut blocks).await.unwrap();
-
-//     assert!(blocks[0].as_slice().iter().all(|&b| b == 0xFF));
+//     let size = dev.size().await.unwrap();
+//     assert_eq!(size, CARD_BYTES as u64);
 // }
 
-// // #[tokio::test]
-// // async fn test_write_and_read_back() {
-// //     let mut dev = make_device().await;
-// //
-// //     // Prepare data
-// //     let mut write_block = Aligned([0u8; BLOCK_SIZE]);
-// //     for (i, b) in write_block.as_mut_slice().iter_mut().enumerate() {
-// //         *b = (i & 0xFF) as u8;
-// //     }
-// //
-// //     // Write block 2
-// //     dev.write(2, &[write_block]).await.unwrap();
-// //
-// //     // Read back
-// //     let mut read_block = Aligned([0u8; BLOCK_SIZE]);
-// //     dev.read(2, std::slice::from_mut(&mut read_block))
-// //         .await
-// //         .unwrap();
-// //
-// //     assert_eq!(write_block.as_slice(), read_block.as_slice());
-// // }
+#[tokio::test]
+async fn test_sd_status_parse() {
+    // The first 64 bytes of your ACMD13 response
+    let status = SDStatus::from([
+        128, 0, 0, 0, 3, 0, 0, 0, 4, 0, 144, 0, 20, 5, 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        0, 0, 0, 0, 0, 0,
+    ]);
 
-// // #[tokio::test]
-// // async fn test_multi_block_rw() {
-// //     let mut dev = make_device().await;
-// //
-// //     let write_blocks = [
-// //         Aligned([1u8; BLOCK_SIZE]),
-// //         Aligned([2u8; BLOCK_SIZE]),
-// //         Aligned([3u8; BLOCK_SIZE]),
-// //     ];
-// //
-// //     dev.write(4, &write_blocks).await.unwrap();
-// //
-// //     let mut read_blocks = [
-// //         Aligned([0u8; BLOCK_SIZE]),
-// //         Aligned([0u8; BLOCK_SIZE]),
-// //         Aligned([0u8; BLOCK_SIZE]),
-// //     ];
-// //
-// //     dev.read(4, &mut read_blocks).await.unwrap();
-// //
-// //     assert_eq!(read_blocks[0].as_slice(), &[1u8; BLOCK_SIZE]);
-// //     assert_eq!(read_blocks[1].as_slice(), &[2u8; BLOCK_SIZE]);
-// //     assert_eq!(read_blocks[2].as_slice(), &[3u8; BLOCK_SIZE]);
-// // }
+    // Bus width: (word 15 >> 30) & 3 = (0x80000000 >> 30) & 3 = 0b10 → W4
+    assert!(matches!(status.bus_width(), Some(BusWidth::W4)));
 
-// // #[tokio::test]
-// // async fn test_size_matches_card() {
-// //     let mut dev = make_device().await;
-// //     let size = dev.size().await.unwrap();
-// //     assert_eq!(size, CARD_BYTES as u64);
-// // }
+    // Secure mode: bit 29 of word 15 → 0
+    assert_eq!(status.secure_mode(), false);
 
-// #[tokio::test]
-// async fn test_sd_status_parse() {
-//     // The first 64 bytes of your ACMD13 response
-//     let status = SDStatus::from([
-//         128, 0, 0, 0, 3, 0, 0, 0, 4, 0, 144, 0, 20, 5, 26, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-//         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-//         0, 0, 0, 0, 0, 0,
-//     ]);
+    // SD Memory Card Type: low 16 bits of word 15 → 0x0000
+    assert_eq!(status.sd_memory_card_type(), 0);
 
-//     // Bus width: (word 15 >> 30) & 3 = (0x80000000 >> 30) & 3 = 0b10 → W4
-//     assert!(matches!(status.bus_width(), Some(BusWidth::W4)));
+    // Protected area size: word 14 = 0x03000000 → 50331648 bytes
+    assert_eq!(status.protected_area_size(), 0x03000000);
 
-//     // Secure mode: bit 29 of word 15 → 0
-//     assert_eq!(status.secure_mode(), false);
+    // Speed class: byte 8 = 4
+    assert_eq!(status.speed_class(), 4);
 
-//     // SD Memory Card Type: low 16 bits of word 15 → 0x0000
-//     assert_eq!(status.sd_memory_card_type(), 0);
+    // Move performance: byte 9 = 0
+    assert_eq!(status.move_performance(), 0);
 
-//     // Protected area size: word 14 = 0x03000000 → 50331648 bytes
-//     assert_eq!(status.protected_area_size(), 0x03000000);
+    // AU size: nibble in byte 10 = 0x9 → 9
+    assert_eq!(status.allocation_unit_size(), 9);
 
-//     // Speed class: byte 8 = 4
-//     assert_eq!(status.speed_class(), 4);
+    // Erase size: bytes 11–12 = 0x00 0x14 → 0x0014 = 20 AU
+    assert_eq!(status.erase_size(), 20);
 
-//     // Move performance: byte 9 = 0
-//     assert_eq!(status.move_performance(), 0);
+    // Erase timeout: bits 23:18 of word 12 = 1
+    assert_eq!(status.erase_timeout(), 1);
 
-//     // AU size: nibble in byte 10 = 0x9 → 9
-//     assert_eq!(status.allocation_unit_size(), 9);
+    // Video speed class: byte 16 = 0
+    assert_eq!(status.video_speed_class(), 0);
 
-//     // Erase size: bytes 11–12 = 0x00 0x14 → 0x0014 = 20 AU
-//     assert_eq!(status.erase_size(), 20);
+    // Application performance class: nibble in byte 22 = 0
+    assert_eq!(status.app_perf_class(), 0);
 
-//     // Erase timeout: bits 23:18 of word 12 = 1
-//     assert_eq!(status.erase_timeout(), 1);
+    // Discard support: bit 25 of word 8 = 0
+    assert_eq!(status.discard_support(), false);
+}
 
-//     // Video speed class: byte 16 = 0
-//     assert_eq!(status.video_speed_class(), 0);
+#[tokio::test]
+async fn test_out_of_bounds_read() {
+    let mut dev = make_device().await;
 
-//     // Application performance class: nibble in byte 22 = 0
-//     assert_eq!(status.app_perf_class(), 0);
+    let mut block = Aligned([0u8; BLOCK_SIZE]);
 
-//     // Discard support: bit 25 of word 8 = 0
-//     assert_eq!(status.discard_support(), false);
-// }
+    let err = dev
+        .read(9999, std::slice::from_mut(&mut block))
+        .await
+        .unwrap_err();
+
+    assert!(matches!(err, MmcError::Io));
+}
 
 // #[tokio::test]
-// async fn test_out_of_bounds_read() {
+// async fn test_out_of_bounds_write() {
 //     let mut dev = make_device().await;
-
-//     let mut block = Aligned([0u8; BLOCK_SIZE]);
-
-//     let err = dev
-//         .read(9999, std::slice::from_mut(&mut block))
-//         .await
-//         .unwrap_err();
-
+//
+//     let block = Aligned([0u8; BLOCK_SIZE]);
+//
+//     let err = dev.write(9999, &[block]).await.unwrap_err();
+//
 //     assert!(matches!(err, MmcError::Io));
 // }
 
-// // #[tokio::test]
-// // async fn test_out_of_bounds_write() {
-// //     let mut dev = make_device().await;
-// //
-// //     let block = Aligned([0u8; BLOCK_SIZE]);
-// //
-// //     let err = dev.write(9999, &[block]).await.unwrap_err();
-// //
-// //     assert!(matches!(err, MmcError::Io));
-// // }
+// ---------------------------------------------------------------------------
+// Regression tests for upstream parsing/protocol bug fixes
+// ---------------------------------------------------------------------------
 
-// // ---------------------------------------------------------------------------
-// // Regression tests for upstream parsing/protocol bug fixes
-// // ---------------------------------------------------------------------------
+#[test]
+fn test_rca_from_r6_preserves_address_and_status() {
+    // RCA must be `(rca << 16) | status`, not `(rca << 16) & status`.
+    let rca: RCA<SD> = R6 {
+        rca: 0x0007,
+        status: 0x0500,
+    }
+    .into();
+    assert_eq!(rca.address(), 0x0007);
+    assert_eq!(rca.status(), 0x0500);
+}
 
-// #[test]
-// fn test_rca_from_r6_preserves_address_and_status() {
-//     // RCA must be `(rca << 16) | status`, not `(rca << 16) & status`.
-//     let rca: RCA<SD> = R6 {
-//         rca: 0x0007,
-//         status: 0x0500,
-//     }
-//     .into();
-//     assert_eq!(rca.address(), 0x0007);
-//     assert_eq!(rca.status(), 0x0500);
-// }
+#[test]
+fn test_block_size_len_is_byte_count_not_discriminant() {
+    // The enum tag is not the byte count; only len() returns 512.
+    assert_eq!(BlockSize::B512.len(), 512);
+    assert_ne!(BlockSize::B512 as usize, 512);
+}
 
-// #[test]
-// fn test_block_size_len_is_byte_count_not_discriminant() {
-//     // The enum tag is not the byte count; only len() returns 512.
-//     assert_eq!(BlockSize::B512.len(), 512);
-//     assert_ne!(BlockSize::B512 as usize, 512);
-// }
+#[tokio::test]
+async fn test_set_block_length_uses_byte_count() {
+    // A 512-byte block read must issue CMD16 with arg 512 (the byte count),
+    // not the BlockSize enum discriminant.
+    let bus = DummyMmcBus::new(CARD_BYTES);
+    let state = bus.state();
+    let mut dev = BlockDevice::<Card, DummyMmcBus, _, BLOCK_SIZE>::new_sd_card(bus, INIT_FREQ, NoopDelay)
+        .await
+        .unwrap();
 
-// #[tokio::test]
-// async fn test_set_block_length_uses_byte_count() {
-//     // A 512-byte block read must issue CMD16 with arg 512 (the byte count),
-//     // not the BlockSize enum discriminant.
-//     let bus = DummyMmcBus::new(CARD_BYTES);
-//     let state = bus.state();
-//     let mut dev = BlockDevice::<Card, _, _, BLOCK_SIZE>::new_sd_card(bus, INIT_FREQ, NoopDelay)
-//         .await
-//         .unwrap();
+    let mut block = Aligned([0u8; BLOCK_SIZE]);
+    dev.read(0, std::slice::from_mut(&mut block)).await.unwrap();
 
-//     let mut block = Aligned([0u8; BLOCK_SIZE]);
-//     dev.read(0, std::slice::from_mut(&mut block)).await.unwrap();
+    assert_eq!(
+        state.lock().unwrap().last_set_blocklen,
+        Some(BLOCK_SIZE as u32)
+    );
+}
 
-//     assert_eq!(
-//         state.lock().unwrap().last_set_blocklen,
-//         Some(BLOCK_SIZE as u32)
-//     );
-// }
+#[test]
+fn test_emmc_access_mode_reads_high_bits() {
+    // Sector mode = OCR bits [30:29] == 0b10; the precedence bug read bits [1:0].
+    let sector: OCR<EMMC> = R3 { ocr: 0x4000_0000 }.into();
+    assert_eq!(sector.access_mode(), 0b10);
 
-// #[test]
-// fn test_emmc_access_mode_reads_high_bits() {
-//     // Sector mode = OCR bits [30:29] == 0b10; the precedence bug read bits [1:0].
-//     let sector: OCR<EMMC> = R3 { ocr: 0x4000_0000 }.into();
-//     assert_eq!(sector.access_mode(), 0b10);
+    let byte: OCR<EMMC> = R3 { ocr: 0x0000_0000 }.into();
+    assert_eq!(byte.access_mode(), 0b00);
+}
 
-//     let byte: OCR<EMMC> = R3 { ocr: 0x0000_0000 }.into();
-//     assert_eq!(byte.access_mode(), 0b00);
-// }
+#[test]
+fn test_emmc_erase_size_blocks_multiplies() {
+    // (erase_grp_size + 1) * (erase_grp_mult + 1); was erroneously a sum.
+    let csd: CSD<EMMC> = (((3u128) << 42) | (4u128 << 37)).into();
+    assert_eq!(csd.erase_size_blocks(), (3 + 1) * (4 + 1));
+}
 
-// #[test]
-// fn test_emmc_erase_size_blocks_multiplies() {
-//     // (erase_grp_size + 1) * (erase_grp_mult + 1); was erroneously a sum.
-//     let csd: CSD<EMMC> = (((3u128) << 42) | (4u128 << 37)).into();
-//     assert_eq!(csd.erase_size_blocks(), (3 + 1) * (4 + 1));
-// }
+#[tokio::test]
+async fn test_sd_status_erase_size_combines_bytes() {
+    // ERASE_SIZE is a 16-bit field split across two status bytes; the high byte
+    // must be shifted up, not OR-ed onto the low byte.
+    let bus = DummyMmcBus::new(CARD_BYTES);
+    let state = bus.state();
 
-// #[tokio::test]
-// async fn test_sd_status_erase_size_combines_bytes() {
-//     // ERASE_SIZE is a 16-bit field split across two status bytes; the high byte
-//     // must be shifted up, not OR-ed onto the low byte.
-//     let bus = DummyMmcBus::new(CARD_BYTES);
-//     let state = bus.state();
+    {
+        let mut st = state.lock().unwrap();
 
-//     {
-//         let mut st = state.lock().unwrap();
+        // According to SD Status layout:
+        //   ERASE_SIZE low byte  = sd_status[11]
+        //   ERASE_SIZE high byte = sd_status[12]
+        st.sd_status[11] = 0x12; // low byte
+        st.sd_status[12] = 0x34; // high byte
+    }
 
-//         // According to SD Status layout:
-//         //   ERASE_SIZE low byte  = sd_status[11]
-//         //   ERASE_SIZE high byte = sd_status[12]
-//         st.sd_status[11] = 0x12; // low byte
-//         st.sd_status[12] = 0x34; // high byte
-//     }
+    let dev = BlockDevice::<Card, DummyMmcBus, _, BLOCK_SIZE>::new_sd_card(bus, INIT_FREQ, NoopDelay)
+        .await
+        .unwrap();
 
-//     let dev = BlockDevice::<Card, _, _, BLOCK_SIZE>::new_sd_card(bus, INIT_FREQ, NoopDelay)
-//         .await
-//         .unwrap();
+    assert_eq!(dev.card().status.erase_size(), 0x1234);
+}
 
-//     assert_eq!(dev.card().status.erase_size(), 0x1234);
-// }
+#[test]
+fn test_fbr_base_maps_function_to_its_own_block() {
+    // FBR for function N lives at 0x100 * N (FN1 = 0x100 ... FN7 = 0x700).
+    // The bug `0x100 + N * 0x100` shifted every access up one function, so
+    // FN1's block size was written into FN2's FBR.
+    use sdio::sdio::{
+        FBR_BLKSZ_HI, FBR_BLKSZ_LO, fbr_base, fbr_block_size_high, fbr_block_size_low,
+    };
 
-// #[test]
-// fn test_fbr_base_maps_function_to_its_own_block() {
-//     // FBR for function N lives at 0x100 * N (FN1 = 0x100 ... FN7 = 0x700).
-//     // The bug `0x100 + N * 0x100` shifted every access up one function, so
-//     // FN1's block size was written into FN2's FBR.
-//     use sdio::sdio::{
-//         FBR_BLKSZ_HI, FBR_BLKSZ_LO, fbr_base, fbr_block_size_high, fbr_block_size_low,
-//     };
+    assert_eq!(fbr_base(1), 0x100);
+    assert_eq!(fbr_base(2), 0x200);
+    assert_eq!(fbr_base(7), 0x700);
 
-//     assert_eq!(fbr_base(1), 0x100);
-//     assert_eq!(fbr_base(2), 0x200);
-//     assert_eq!(fbr_base(7), 0x700);
+    // Derived helpers must land inside the same function's block.
+    assert_eq!(fbr_block_size_low(1), 0x100 + FBR_BLKSZ_LO);
+    assert_eq!(fbr_block_size_high(1), 0x100 + FBR_BLKSZ_HI);
 
-//     // Derived helpers must land inside the same function's block.
-//     assert_eq!(fbr_block_size_low(1), 0x100 + FBR_BLKSZ_LO);
-//     assert_eq!(fbr_block_size_high(1), 0x100 + FBR_BLKSZ_HI);
-
-//     // FN1's block-size register must never collide with FN2's base.
-//     assert!(fbr_block_size_high(1) < fbr_base(2));
-// }
+    // FN1's block-size register must never collide with FN2's base.
+    assert!(fbr_block_size_high(1) < fbr_base(2));
+}
 
 // ---------------------------------------------------------------------------
 // SD Status (SSR) field decoding — PLSS v7_10 §4.10.2, Table 4-44.

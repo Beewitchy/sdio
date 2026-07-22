@@ -84,9 +84,9 @@ pub fn card_status() -> common::Cmd13 {
 ///
 /// In SPI mode only the HCS bit is supported.
 ///
-/// The trait implementation for SpiMode ignores the other bits
-/// so this helper function is just for convenience when using a
-/// known SPI mode bus.
+/// The trait implementation for SpiMode automatically ignores the
+/// unsupported arguments, so this helper function is just for
+/// convenience when using a known SPI mode bus.
 pub fn sd_send_op_cond(host_high_capacity_support: bool) -> sd::Acmd41 {
     sd::Acmd41 {
         host_high_capacity_support,
@@ -94,6 +94,17 @@ pub fn sd_send_op_cond(host_high_capacity_support: bool) -> sd::Acmd41 {
         switch_to_1_8v_request: false,
         voltage_window: 0,
     }
+}
+
+/// CMD55: App Command. Indicates that next command will be a app command
+///
+/// In SPI mode the rca (card address register) is not used.
+///
+/// The trait implementation for SpiMode ignores the rca argument,
+/// so this helper function is just for convenience when using a
+/// known SPI mode bus.
+pub fn app_cmd() -> common::Cmd55 {
+    common::Cmd55 { rca: 0 }
 }
 
 /// CRC_ON_OFF for SPI mode
@@ -279,9 +290,87 @@ impl R2 {
     pub const WP_ERASE_SKIP: u8 = 0b0000_0010;
     pub const LOCK_UNLOCK_FAILED: u8 = 0b0000_0010;
     pub const CARD_IS_LOCKED: u8 = 0b0000_0001;
+}
 
-    const fn locked(&self) -> bool {
+impl common::CardStatus for R2 {
+    fn out_of_range(&self) -> bool {
+        self.status & Self::OUT_OF_RANGE != 0
+    }
+
+    fn address_error(&self) -> bool {
+        self.result.result & R1::ADDRESS_ERROR != 0
+    }
+
+    fn block_len_error(&self) -> bool {
+        false
+    }
+
+    fn erase_seq_error(&self) -> bool {
+        self.result.result & R1::ERASE_SEQ_ERROR != 0
+    }
+
+    fn erase_param(&self) -> bool {
+        self.status & Self::ERASE_PARAM != 0
+    }
+
+    fn wp_violation(&self) -> bool {
+        self.status & Self::WP_VIOLATION != 0
+    }
+
+    fn card_is_locked(&self) -> bool {
         self.status & Self::CARD_IS_LOCKED != 0
+    }
+
+    fn lock_unlock_failed(&self) -> bool {
+        self.status & Self::LOCK_UNLOCK_FAILED != 0
+    }
+
+    fn com_crc_error(&self) -> bool {
+        self.result.result & R1::COM_CRC_ERROR != 0
+    }
+
+    fn illegal_command(&self) -> bool {
+        self.result.result & R1::ILLEGAL_COMMAND != 0
+    }
+
+    fn card_ecc_failed(&self) -> bool {
+        self.status & Self::CARD_ECC_FAILED != 0
+    }
+
+    fn cc_error(&self) -> bool {
+        self.status & Self::CC_ERROR != 0
+    }
+
+    fn error(&self) -> bool {
+        self.status & Self::ERROR != 0
+    }
+
+    fn csd_overwrite(&self) -> bool {
+        self.status & Self::CSD_OVERWRITE != 0
+    }
+
+    fn wp_erase_skip(&self) -> bool {
+        self.status & Self::WP_ERASE_SKIP != 0
+    }
+
+    fn erase_reset(&self) -> bool {
+        self.result.result & R1::ERASE_RESET != 0
+    }
+
+    fn state(&self) -> sd::CurrentState {
+        if self.result.result & R1::IN_IDLE_STATE != 0 {
+            sd::CurrentState::Idle
+        } else {
+            sd::CurrentState::Ready
+        }
+    }
+
+    fn ready_for_data(&self) -> bool {
+        false
+    }
+
+    fn app_cmd(&self) -> bool {
+        false
     }
 }
 
@@ -730,7 +819,7 @@ where
         Err(MmcError::Unsupported)
     }
 
-    async fn write_bytes<'a, C>(&mut self, mut cmd: C) -> Result<C::Resp<'a>, MmcError>
+    async fn write_bytes<'a, C>(&mut self, _cmd: C) -> Result<C::Resp<'a>, MmcError>
     where
         C: ByteWriteCommand + 'a,
     {
