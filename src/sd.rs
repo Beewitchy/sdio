@@ -1277,6 +1277,12 @@ where
 
         this.ocr = bus.send_command(read_ocr(), false).await?.into();
 
+        // CMD10 — send CID
+        let mut buf = aligned::Aligned([0xFFu8; _]);
+        bus.read_blocks(spi::send_cid(&mut buf), false, false)
+            .await?;
+        this.cid = CID::from(*buf);
+
         // CMD9 — read CSD
         let mut buf = aligned::Aligned([0xFFu8; _]);
         bus.read_blocks(spi::send_csd(&mut buf), false, false)

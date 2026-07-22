@@ -72,6 +72,39 @@ pub fn send_csd<'a>(buf: &'a mut aligned::Aligned<aligned::A4, [u8; 16]>) -> Cmd
     }
 }
 
+/// CMD10 — SEND_CID
+pub struct Cmd10<'a> {
+    pub buf: &'a mut [aligned::Aligned<aligned::A4, [u8; 16]>],
+}
+impl<'a> CommandIndex for Cmd10<'a> {
+    const INDEX: u8 = 10;
+}
+impl<'a> Command<SpiMode> for Cmd10<'a> {
+    type Resp<'r> = R1 where Self: 'r;
+    fn arg(&self) -> u32 {
+        0
+    }
+}
+impl<'a> BlockCommand<SpiMode> for Cmd10<'a> {
+    type Block = aligned::Aligned<aligned::A4, [u8; 16]>;
+
+    fn block_count(&self) -> u32 {
+        1
+    }
+
+    fn buf(&mut self) -> &mut [Self::Block] {
+        &mut *self.buf
+    }
+}
+impl<'a> BlockReadCommand<SpiMode> for Cmd10<'a> {}
+
+/// CMD10: Send CID
+pub fn send_cid<'a>(buf: &'a mut aligned::Aligned<aligned::A4, [u8; 16]>) -> Cmd10<'a> {
+    Cmd10 {
+        buf: core::slice::from_mut(buf),
+    }
+}
+
 /// CMD13: Ask card to send status
 pub fn card_status() -> common::Cmd13 {
     common::Cmd13 {

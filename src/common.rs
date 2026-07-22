@@ -6,8 +6,8 @@ use core::fmt::Debug;
 use aligned::{A4, Aligned};
 
 use crate::{
-    BlockCommand, BlockReadCommand, BlockWriteCommand, Command, CommandIndex, ControlCommand, R0, R1, R1b, R2,
-    R3, R4, R6, SdMode, spi
+    BlockCommand, BlockReadCommand, BlockWriteCommand, Command, CommandIndex, ControlCommand, R0,
+    R1, R1b, R2, R3, R4, R6, SdMode, spi,
 };
 
 // ============================================================================
@@ -114,12 +114,6 @@ impl Command<SdMode> for Cmd10 {
         (self.rca as u32) << 16
     }
 }
-impl Command<spi::SpiMode> for Cmd10 {
-    type Resp<'a> = spi::R1;
-    fn arg(&self) -> u32 {
-        0
-    }
-}
 impl<M> ControlCommand<M> for Cmd10 where Self: Command<M> {}
 
 /// CMD10: Send CID
@@ -169,7 +163,9 @@ impl Command<SdMode> for Cmd13 {
 }
 impl Command<spi::SpiMode> for Cmd13 {
     type Resp<'a> = spi::R2;
-    fn arg(&self) -> u32 { 0 }
+    fn arg(&self) -> u32 {
+        0
+    }
 }
 impl<M> ControlCommand<M> for Cmd13 where Self: Command<M> {}
 
@@ -238,7 +234,10 @@ impl<'a, const BLOCK_SIZE: usize> Command<spi::SpiMode> for Cmd17<'a, BLOCK_SIZE
         self.addr
     }
 }
-impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd17<'a, BLOCK_SIZE> where Self: Command<M> {
+impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd17<'a, BLOCK_SIZE>
+where
+    Self: Command<M>,
+{
     type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         1
@@ -248,7 +247,10 @@ impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd17<'a, BLOCK_SIZE> w
     }
 }
 
-impl<'a, const BLOCK_SIZE: usize, M> BlockReadCommand<M> for Cmd17<'a, BLOCK_SIZE> where Self: Command<M> {}
+impl<'a, const BLOCK_SIZE: usize, M> BlockReadCommand<M> for Cmd17<'a, BLOCK_SIZE> where
+    Self: Command<M>
+{
+}
 
 /// CMD17: Read a single block from the card
 pub fn read_single_block<const BLOCK_SIZE: usize>(
@@ -287,7 +289,10 @@ impl<'a, const BLOCK_SIZE: usize> Command<spi::SpiMode> for Cmd18<'a, BLOCK_SIZE
         self.addr
     }
 }
-impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd18<'a, BLOCK_SIZE> where Self: Command<M> {
+impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd18<'a, BLOCK_SIZE>
+where
+    Self: Command<M>,
+{
     type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         self.bufs.len() as u32
@@ -296,7 +301,10 @@ impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd18<'a, BLOCK_SIZE> w
         self.bufs
     }
 }
-impl<'a, const BLOCK_SIZE: usize, M> BlockReadCommand<M> for Cmd18<'a, BLOCK_SIZE> where Self: Command<M> {}
+impl<'a, const BLOCK_SIZE: usize, M> BlockReadCommand<M> for Cmd18<'a, BLOCK_SIZE> where
+    Self: Command<M>
+{
+}
 
 /// CMD18: Read multiple block from the card
 pub fn read_multiple_blocks<const BLOCK_SIZE: usize>(
@@ -332,7 +340,10 @@ impl<'a, const BLOCK_SIZE: usize> Command<spi::SpiMode> for Cmd24<'a, BLOCK_SIZE
         self.addr
     }
 }
-impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd24<'a, BLOCK_SIZE> where Self: Command<M> {
+impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd24<'a, BLOCK_SIZE>
+where
+    Self: Command<M>,
+{
     type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         1
@@ -342,7 +353,10 @@ impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd24<'a, BLOCK_SIZE> w
     }
 }
 
-impl<'a, const BLOCK_SIZE: usize, M> BlockWriteCommand<M> for Cmd24<'a, BLOCK_SIZE> where Self: Command<M> {}
+impl<'a, const BLOCK_SIZE: usize, M> BlockWriteCommand<M> for Cmd24<'a, BLOCK_SIZE> where
+    Self: Command<M>
+{
+}
 
 /// CMD24: Write block
 pub fn write_single_block<const BLOCK_SIZE: usize>(
@@ -381,7 +395,10 @@ impl<'a, const BLOCK_SIZE: usize> Command<spi::SpiMode> for Cmd25<'a, BLOCK_SIZE
         self.addr
     }
 }
-impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd25<'a, BLOCK_SIZE> where Self: Command<M> {
+impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd25<'a, BLOCK_SIZE>
+where
+    Self: Command<M>,
+{
     type Block = Aligned<A4, [u8; BLOCK_SIZE]>;
     fn block_count(&self) -> u32 {
         self.bufs.len() as u32
@@ -391,7 +408,10 @@ impl<'a, const BLOCK_SIZE: usize, M> BlockCommand<M> for Cmd25<'a, BLOCK_SIZE> w
         self.bufs
     }
 }
-impl<'a, const BLOCK_SIZE: usize, M> BlockWriteCommand<M> for Cmd25<'a, BLOCK_SIZE> where Self: Command<M> {}
+impl<'a, const BLOCK_SIZE: usize, M> BlockWriteCommand<M> for Cmd25<'a, BLOCK_SIZE> where
+    Self: Command<M>
+{
+}
 
 /// CMD25: Write multiple blocks
 pub fn write_multiple_blocks<const BLOCK_SIZE: usize>(
@@ -678,6 +698,14 @@ pub struct CID<Ext> {
     pub(crate) bytes: [u8; 16],
     ext: PhantomData<Ext>,
 }
+impl<Ext> From<[u8; 16]> for CID<Ext> {
+    fn from(bytes: [u8; 16]) -> Self {
+        Self {
+            bytes: bytes,
+            ext: PhantomData,
+        }
+    }
+}
 /// From little endian words
 impl<Ext> From<R2> for CID<Ext> {
     fn from(resp: R2) -> Self {
@@ -845,28 +873,28 @@ impl<Ext> From<R1> for CardStatusRegister<Ext> {
 }
 
 impl<Ext> CardStatusRegister<Ext> {
-    pub const OUT_OF_RANGE: u32 =       0b1000_0000_0000_0000_0000_0000_0000_0000;
-    pub const ADDRESS_ERROR: u32 =      0b0100_0000_0000_0000_0000_0000_0000_0000;
-    pub const BLOCK_LEN_ERROR: u32 =    0b0010_0000_0000_0000_0000_0000_0000_0000;
-    pub const ERASE_SEQ_ERROR: u32 =    0b0001_0000_0000_0000_0000_0000_0000_0000;
-    pub const ERASE_PARAM: u32 =        0b0000_1000_0000_0000_0000_0000_0000_0000;
-    pub const WP_VIOLATION: u32 =       0b0000_0100_0000_0000_0000_0000_0000_0000;
-    pub const CARD_IS_LOCKED: u32 =     0b0000_0010_0000_0000_0000_0000_0000_0000;
+    pub const OUT_OF_RANGE: u32 = 0b1000_0000_0000_0000_0000_0000_0000_0000;
+    pub const ADDRESS_ERROR: u32 = 0b0100_0000_0000_0000_0000_0000_0000_0000;
+    pub const BLOCK_LEN_ERROR: u32 = 0b0010_0000_0000_0000_0000_0000_0000_0000;
+    pub const ERASE_SEQ_ERROR: u32 = 0b0001_0000_0000_0000_0000_0000_0000_0000;
+    pub const ERASE_PARAM: u32 = 0b0000_1000_0000_0000_0000_0000_0000_0000;
+    pub const WP_VIOLATION: u32 = 0b0000_0100_0000_0000_0000_0000_0000_0000;
+    pub const CARD_IS_LOCKED: u32 = 0b0000_0010_0000_0000_0000_0000_0000_0000;
     pub const LOCK_UNLOCK_FAILED: u32 = 0b0000_0001_0000_0000_0000_0000_0000_0000;
-    pub const COM_CRC_ERROR: u32 =      0b0000_0000_1000_0000_0000_0000_0000_0000;
-    pub const ILLEGAL_COMMAND: u32 =    0b0000_0000_0100_0000_0000_0000_0000_0000;
-    pub const CARD_ECC_FAILED: u32 =    0b0000_0000_0010_0000_0000_0000_0000_0000;
-    pub const CC_ERROR: u32 =           0b0000_0000_0001_0000_0000_0000_0000_0000;
-    pub const ERROR: u32 =              0b0000_0000_0000_1000_0000_0000_0000_0000;
-    pub const CSD_OVERWRITE: u32 =      0b0000_0000_0000_0001_0000_0000_0000_0000;
-    pub const WP_ERASE_SKIP: u32 =      0b0000_0000_0000_0000_1000_0000_0000_0000;
-    pub const CARD_ECC_DISABLED: u32 =  0b0000_0000_0000_0000_0100_0000_0000_0000;
-    pub const ERASE_RESET: u32 =        0b0000_0000_0000_0000_0010_0000_0000_0000;
-    pub const READY_FOR_DATA: u32 =     0b0000_0000_0000_0000_0000_0001_0000_0000;
-    pub const FX_EVENT: u32 =           0b0000_0000_0000_0000_0000_0000_0100_0000;
-    pub const APP_CMD: u32 =            0b0000_0000_0000_0000_0000_0000_0010_0000;
-    pub const AKE_SEQ_ERROR: u32 =      0b0000_0000_0000_0000_0000_0000_0000_1000;
-    pub const STATE_BITS_MASK: u32 =    0b0000_0000_0000_0000_0001_1110_0000_0000;
+    pub const COM_CRC_ERROR: u32 = 0b0000_0000_1000_0000_0000_0000_0000_0000;
+    pub const ILLEGAL_COMMAND: u32 = 0b0000_0000_0100_0000_0000_0000_0000_0000;
+    pub const CARD_ECC_FAILED: u32 = 0b0000_0000_0010_0000_0000_0000_0000_0000;
+    pub const CC_ERROR: u32 = 0b0000_0000_0001_0000_0000_0000_0000_0000;
+    pub const ERROR: u32 = 0b0000_0000_0000_1000_0000_0000_0000_0000;
+    pub const CSD_OVERWRITE: u32 = 0b0000_0000_0000_0001_0000_0000_0000_0000;
+    pub const WP_ERASE_SKIP: u32 = 0b0000_0000_0000_0000_1000_0000_0000_0000;
+    pub const CARD_ECC_DISABLED: u32 = 0b0000_0000_0000_0000_0100_0000_0000_0000;
+    pub const ERASE_RESET: u32 = 0b0000_0000_0000_0000_0010_0000_0000_0000;
+    pub const READY_FOR_DATA: u32 = 0b0000_0000_0000_0000_0000_0001_0000_0000;
+    pub const FX_EVENT: u32 = 0b0000_0000_0000_0000_0000_0000_0100_0000;
+    pub const APP_CMD: u32 = 0b0000_0000_0000_0000_0000_0000_0010_0000;
+    pub const AKE_SEQ_ERROR: u32 = 0b0000_0000_0000_0000_0000_0000_0000_1000;
+    pub const STATE_BITS_MASK: u32 = 0b0000_0000_0000_0000_0001_1110_0000_0000;
 }
 
 impl<Ext> core::ops::BitOr for CardStatusRegister<Ext> {
