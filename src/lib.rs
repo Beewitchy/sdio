@@ -635,8 +635,7 @@ impl CardError {
             return None;
         }
 
-        // isolate lowest set bit
-        match bits & (!bits + 1) {
+        match bits.isolate_lowest_one() {
             Self::OUT_OF_RANGE => Some(Self::OutOfRange),
             Self::ADDRESS_ERROR => Some(Self::AddressError),
             Self::BLOCK_LEN_ERROR => Some(Self::BlockLenError),
@@ -914,8 +913,7 @@ impl SdioError {
             return None;
         }
 
-        // isolate lowest set bit
-        match bits & (!bits + 1) {
+        match bits.isolate_lowest_one() {
             Self::FLAG_COM_CRC_ERROR => Some(Self::ComCrcError),
             Self::FLAG_ILLEGAL_COMMAND => Some(Self::IllegalCommand),
             Self::FLAG_ERROR => Some(Self::Error),

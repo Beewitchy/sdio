@@ -222,7 +222,7 @@ impl Response for R1 {
 
     #[inline]
     fn to_result(self) -> Result<Self, MmcError> {
-        match self.result {
+        match self.result.isolate_highest_one() {
             Self::PARAMETER_ERROR => Err(MmcError::Card(crate::CardError::OutOfRange)),
             Self::ADDRESS_ERROR => Err(MmcError::Card(crate::CardError::AddressError)),
             Self::ERASE_SEQ_ERROR => Err(MmcError::Card(crate::CardError::EraseSeqError)),
@@ -297,7 +297,7 @@ impl Response for R2 {
 
     #[inline]
     fn to_result(self) -> Result<Self, MmcError> {
-        self.result.to_result().and(match self.status {
+        self.result.to_result().and(match self.status.isolate_highest_one() {
             Self::CSD_OVERWRITE => Err(MmcError::Card(crate::CardError::CidCsdOverwrite)),
             Self::ERASE_PARAM => Err(MmcError::Card(crate::CardError::EraseParamError)),
             Self::WP_VIOLATION => Err(MmcError::Card(crate::CardError::WriteProtViolation)),
