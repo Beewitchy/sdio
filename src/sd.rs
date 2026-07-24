@@ -34,7 +34,7 @@ impl Command<SdMode> for Cmd3 {
 impl<M> ControlCommand<M> for Cmd3 where Self: Command<M> {}
 
 /// CMD3 — SEND_RELATIVE_ADDR (RCA)
-pub fn send_relative_address() -> Cmd3 {
+pub const fn send_relative_address() -> Cmd3 {
     Cmd3
 }
 
@@ -109,7 +109,7 @@ impl Command<spi::SpiMode> for Cmd8 {
 impl<M> ControlCommand<M> for Cmd8 where Self: Command<M> {}
 
 /// CMD8 — SEND_IF_COND
-pub fn send_if_cond(voltage: u8, checkpattern: u8) -> Cmd8 {
+pub const fn send_if_cond(voltage: u8, checkpattern: u8) -> Cmd8 {
     Cmd8 {
         voltage,
         checkpattern,
@@ -130,7 +130,7 @@ impl Command<SdMode> for Cmd11 {
 impl<M> ControlCommand<M> for Cmd11 where Self: Command<M> {}
 
 /// CMD11 — VOLTAGE_SWITCH
-pub fn voltage_switch() -> Cmd11 {
+pub const fn voltage_switch() -> Cmd11 {
     Cmd11
 }
 
@@ -210,7 +210,7 @@ impl Command<SdMode> for Cmd20 {
 impl<M> ControlCommand<M> for Cmd20 where Self: Command<M> {}
 
 /// CMD20 — SPEED_CLASS_CONTROL
-pub fn speed_class_control(arg: u32) -> Cmd20 {
+pub const fn speed_class_control(arg: u32) -> Cmd20 {
     Cmd20 { arg }
 }
 
@@ -230,7 +230,7 @@ impl Command<SdMode> for Cmd22 {
 impl<M> ControlCommand<M> for Cmd22 where Self: Command<M> {}
 
 /// CMD22 — ADDRESS_EXTENSION
-pub fn address_extension(arg: u32) -> Cmd22 {
+pub const fn address_extension(arg: u32) -> Cmd22 {
     Cmd22 { arg }
 }
 
@@ -256,7 +256,7 @@ impl Command<spi::SpiMode> for Cmd23 {
 impl<M> ControlCommand<M> for Cmd23 where Self: Command<M> {}
 
 /// CMD23 — SET_BLOCK_COUNT
-pub fn set_block_count(blockcount: u32) -> Cmd23 {
+pub const fn set_block_count(blockcount: u32) -> Cmd23 {
     Cmd23 { blockcount }
 }
 
@@ -282,7 +282,7 @@ impl Command<spi::SpiMode> for Cmd32 {
 impl<M> ControlCommand<M> for Cmd32 where Self: Command<M> {}
 
 /// CMD32 — ERASE_WR_BLK_START_ADDR
-pub fn erase_wr_blk_start_addr(address: u32) -> Cmd32 {
+pub const fn erase_wr_blk_start_addr(address: u32) -> Cmd32 {
     Cmd32 { address }
 }
 
@@ -308,7 +308,7 @@ impl Command<spi::SpiMode> for Cmd33 {
 impl<M> ControlCommand<M> for Cmd33 where Self: Command<M> {}
 
 /// CMD33 — ERASE_WR_BLK_END_ADDR
-pub fn erase_wr_blk_end_addr(address: u32) -> Cmd33 {
+pub const fn erase_wr_blk_end_addr(address: u32) -> Cmd33 {
     Cmd33 { address }
 }
 
@@ -337,7 +337,7 @@ impl<M> ControlCommand<M> for Cmd36 where Self: Command<M> {}
 /// be selected for erase
 ///
 /// Address is either byte address or sector address (set in OCR)
-pub fn erase_group_end(address: u32) -> Cmd36 {
+pub const fn erase_group_end(address: u32) -> Cmd36 {
     Cmd36 { address }
 }
 
@@ -360,7 +360,7 @@ impl Command<spi::SpiMode> for Cmd58 {
 }
 impl<M> ControlCommand<M> for Cmd58 where Self: Command<M> {}
 
-pub fn read_ocr() -> Cmd58 {
+pub const fn read_ocr() -> Cmd58 {
     Cmd58
 }
 
@@ -385,7 +385,7 @@ impl Command<SdMode> for Acmd6 {
 impl<M> ControlCommand<M> for Acmd6 where Self: Command<M> {}
 
 /// ACMD6 — SET_BUS_WIDTH
-pub fn set_bus_width(bw4bit: bool) -> Acmd6 {
+pub const fn set_bus_width(bw4bit: bool) -> Acmd6 {
     Acmd6 { bw4bit }
 }
 
@@ -464,7 +464,7 @@ impl<M> ControlCommand<M> for Acmd23 where Self: Command<M> {}
 
 /// ACMD23 — SET_WR_BLK_ERASE_COUNT: set the number of write blocks to be
 /// pre-erased before the next multi-block write, to speed up the write.
-pub fn set_wr_blk_erase_count(block_count: u32) -> Acmd23 {
+pub const fn set_wr_blk_erase_count(block_count: u32) -> Acmd23 {
     Acmd23 { block_count }
 }
 
@@ -497,7 +497,7 @@ impl Command<spi::SpiMode> for Acmd41 {
 impl<M> ControlCommand<M> for Acmd41 where Self: Command<M> {}
 
 /// ACMD41 — SD_SEND_OP_COND
-pub fn sd_send_op_cond(
+pub const fn sd_send_op_cond(
     host_high_capacity_support: bool,
     sdxc_power_control: bool,
     switch_to_1_8v_request: bool,
@@ -510,6 +510,40 @@ pub fn sd_send_op_cond(
         voltage_window,
     }
 }
+
+/// ACMD42 — SET_CLR_CARD_DETECT
+pub enum Acmd42 {
+    Disconnect,
+    Connect,
+}
+impl CommandIndex for Acmd42 {
+    const INDEX: u8 = 42;
+    const ALWAYS_APP: bool = true;
+}
+impl Command<SdMode> for Acmd42 {
+    type Resp<'a> = R3;
+    fn arg(&self) -> u32 {
+        match self {
+            Self::Disconnect => 0u32,
+            Self::Connect => 1u32
+        }
+    }
+}
+impl Command<spi::SpiMode> for Acmd42 {
+    type Resp<'a> = spi::R1;
+    fn arg(&self) -> u32 {
+        match self {
+            Self::Disconnect => 0u32,
+            Self::Connect => 1u32
+        }
+    }
+}
+impl<M> ControlCommand<M> for Acmd42 where Self: Command<M> {}
+
+/// ACMD42 — SET_CLR_CARD_DETECT
+/// Set to 1 to connect, 0 to disconnect the 50
+/// KOhm pull-up resistor on CS (pin 1) of the card.
+pub type SetClrCardDetect = Acmd42;
 
 /// ACMD51 — SEND_SCR (block read, 8 bytes)
 pub struct Acmd51<'a> {
@@ -1154,9 +1188,12 @@ where
 
         // ACMD41 — negotiate OCR (with S18A if host supports 1.8V)
         this.ocr = bus
-            .get_ready(
-                &sd_send_op_cond(true, false, bus.bus.supports_1v8(), 1 << 5)
-            )
+            .get_ready(&sd_send_op_cond(
+                true,
+                false,
+                bus.bus.supports_1v8(),
+                1 << 5,
+            ))
             .await?
             .into();
 
@@ -1171,27 +1208,19 @@ where
         }
 
         // CMD2 — read CID
-        this.cid = bus
-            .send_command(common::all_send_cid())
-            .await?
-            .into();
+        this.cid = bus.send_command(common::all_send_cid()).await?.into();
 
         // CMD3 — get RCA
-        bus.rca =
-            RCA::<SD>::from(bus.send_command(send_relative_address()).await?).address();
+        bus.rca = RCA::<SD>::from(bus.send_command(send_relative_address()).await?).address();
 
         // CMD9 — read CSD (must be ≤25 MHz, 1-bit)
-        this.csd = bus
-            .send_command(common::send_csd(bus.rca))
-            .await?
-            .into();
+        this.csd = bus.send_command(common::send_csd(bus.rca)).await?.into();
 
         // CMD7 — select card
         bus.select_card(Some(bus.rca)).await?;
 
         // ACMD51 — read SCR (must be ≤25 MHz, 1-bit)
-        bus.read_blocks(sd::send_scr(&mut this.scr), false)
-            .await?;
+        bus.read_blocks(sd::send_scr(&mut this.scr), false).await?;
 
         // ACMD6 — set bus width BEFORE high-speed signalling switch
         let (bus_width, bw4bit) = match bus_width {
@@ -1280,25 +1309,20 @@ where
 
         // CMD10 — send CID
         let mut buf = aligned::Aligned([0xFFu8; _]);
-        bus.read_blocks(spi::send_cid(&mut buf), false)
-            .await?;
+        bus.read_blocks(spi::send_cid(&mut buf), false).await?;
         this.cid = CID::from(*buf);
 
         // CMD9 — read CSD
         let mut buf = aligned::Aligned([0xFFu8; _]);
-        bus.read_blocks(spi::send_csd(&mut buf), false)
-            .await?;
+        bus.read_blocks(spi::send_csd(&mut buf), false).await?;
         this.csd = CSD::from(u128::from_ne_bytes(*buf));
 
         // ACMD51 — read SCR
-        bus.read_blocks(sd::send_scr(&mut this.scr), false)
-            .await?;
+        bus.read_blocks(sd::send_scr(&mut this.scr), false).await?;
 
         bus.bus.set_bus(BusWidth::W1, freq.min(25_000_000))?;
 
-        bus.send_command(spi::card_status())
-            .await?
-            .to_result()?;
+        bus.send_command(spi::card_status()).await?.to_result()?;
 
         // ACMD13 — SD Status
         bus.read_blocks(sd::sd_status(&mut this.status), false)
@@ -1340,8 +1364,7 @@ impl Card {
                 Signalling::SDR12 => 0xFF_FF00,
             };
 
-        bus.read_blocks(cmd6(set_function, buf), false)
-            .await?;
+        bus.read_blocks(cmd6(set_function, buf), false).await?;
 
         // Host is allowed to use the new functions at least 8
         // clocks after the end of the switch command

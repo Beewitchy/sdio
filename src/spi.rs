@@ -106,7 +106,7 @@ pub fn send_cid<'a>(buf: &'a mut aligned::Aligned<aligned::A4, [u8; 16]>) -> Cmd
 }
 
 /// CMD13: Ask card to send status
-pub fn card_status() -> common::Cmd13 {
+pub const fn card_status() -> common::Cmd13 {
     common::Cmd13 {
         rca: 0,
         task_status: false,
@@ -120,7 +120,7 @@ pub fn card_status() -> common::Cmd13 {
 /// The trait implementation for SpiMode automatically ignores the
 /// unsupported arguments, so this helper function is just for
 /// convenience when using a known SPI mode bus.
-pub fn sd_send_op_cond(host_high_capacity_support: bool) -> sd::Acmd41 {
+pub const fn sd_send_op_cond(host_high_capacity_support: bool) -> sd::Acmd41 {
     sd::Acmd41 {
         host_high_capacity_support,
         sdxc_power_control: false,
@@ -136,7 +136,7 @@ pub fn sd_send_op_cond(host_high_capacity_support: bool) -> sd::Acmd41 {
 /// The trait implementation for SpiMode ignores the rca argument,
 /// so this helper function is just for convenience when using a
 /// known SPI mode bus.
-pub fn app_cmd() -> common::Cmd55 {
+pub const fn app_cmd() -> common::Cmd55 {
     common::Cmd55 { rca: 0 }
 }
 
